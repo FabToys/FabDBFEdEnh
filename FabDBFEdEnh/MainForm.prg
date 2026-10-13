@@ -852,7 +852,7 @@ PUBLIC CLASS MainForm INHERIT System.Windows.Forms.Form
         LOCAL oF := SELF:ActiveWindow() AS DataWindow
         IF oF != NULL
             LOCAL dlg := InputDialog{ "Set Filter", ;
-                "Expression in X#/VO syntax, e.g.  ENTFERNT != '11'  or  DAT_EINGAB >= CToD('01.01.2026').  Empty = filter off.", ;
+                "Expression in X#/VO syntax, e.g.  STATUS != 'X'  or  ORDERDATE >= CToD('01.01.2026').  Empty = filter off.", ;
                 <STRING>{ "Filter" }, <STRING>{ oF:FilterText }, "", FALSE } AS InputDialog
             IF dlg:ShowDialog( SELF ) == DialogResult.OK
                 oF:SetFilter( dlg:InputValue( 0 ) )

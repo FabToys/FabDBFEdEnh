@@ -1,0 +1,74 @@
+name: Build
+
+# Builds FabDBFEdEnh.sln with MSBuild on a GitHub hosted Windows runner.
+#
+# The X# compiler and MSBuild targets are NOT on the runner and are not published as a NuGet package or a GitHub
+# release asset, so the job installs them from an installer that you provide:
+#   Settings > Secrets and variables > Actions > Variables > New repository variable
+#     XSHARP_INSTALLER_URL = direct download URL of the X# setup program (xsharp.eu download)
+#     XSHARP_INSTALLER_ARGS (optional) = silent install switches, default: /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP-
+# While XSHARP_INSTALLER_URL is not defined the job only prints a warning and ends successfully.
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    env:
+      XSHARP_INSTALLER_URL: ${{ vars.XSHARP_INSTALLER_URL }}
+      XSHARP_INSTALLER_ARGS: ${{ vars.XSHARP_INSTALLER_ARGS }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Is X# available?
+        id: xsharp
+        shell: pwsh
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:XSHARP_INSTALLER_URL)) {
+            Write-Host "::warning title=X# installer not configured::Define the repository variable XSHARP_INSTALLER_URL (see the header of .github/workflows/build.yml). The build is skipped."
+            "configured=false" >> $env:GITHUB_OUTPUT
+          } else {
+            "configured=true" >> $env:GITHUB_OUTPUT
+          }
+
+      - name: Install X#
+        if: steps.xsharp.outputs.configured == 'true'
+        shell: pwsh
+        run: |
+          $setup = Join-Path $env:RUNNER_TEMP 'xsharp-setup.exe'
+          Invoke-WebRequest -Uri $env:XSHARP_INSTALLER_URL -OutFile $setup
+          $args = if ([string]::IsNullOrWhiteSpace($env:XSHARP_INSTALLER_ARGS)) { '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP-' } else { $env:XSHARP_INSTALLER_ARGS }
+          $p = Start-Process -FilePath $setup -ArgumentList $args -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "X# setup failed with exit code $($p.ExitCode)" }
+          # the installer sets machine wide variables that this job does not see: pass them on explicitly
+          $root = Join-Path ${env:ProgramFiles(x86)} 'XSharp'
+          "XSharpPath=$root" >> $env:GITHUB_ENV
+          "XSharpMsBuildDir=$(Join-Path $root 'MsBuild')" >> $env:GITHUB_ENV
+          Get-ChildItem (Join-Path $root 'Assemblies') -Filter 'XSharp.Core.dll' | ForEach-Object { Write-Host "found $($_.FullName)" }
+
+      - name: Setup MSBuild
+        if: steps.xsharp.outputs.configured == 'true'
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Build (NuGet restore + Release)
+        if: steps.xsharp.outputs.configured == 'true'
+        shell: pwsh
+        run: msbuild FabDBFEdEnh.sln -restore -p:Configuration=Release -verbosity:minimal
+
+      - name: Upload the build output
+        if: steps.xsharp.outputs.configured == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: FabDBFEdEnh-Release
+          path: FabDBFEdEnh/bin/Release/
+          if-no-files-found: error

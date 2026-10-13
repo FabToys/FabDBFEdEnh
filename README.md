@@ -89,6 +89,13 @@ FabDBFEdEnh\
     lib\                                  ICSharpCode.TextEditorEx, Newtonsoft.Json (XIde; Visual Studio uses NuGet)
 ```
 
+## Continuous integration
+
+`.github/workflows/build.yml` builds `FabDBFEdEnh.sln` (Release) on a GitHub hosted Windows runner and uploads the result as an artifact.
+The X# compiler is not available on the runner, so the workflow installs it from an installer that you provide: define the repository
+variable `XSHARP_INSTALLER_URL` (and optionally `XSHARP_INSTALLER_ARGS`, the silent install switches).
+Until it is defined the workflow only prints a warning and skips the build.
+
 ## Not implemented yet
 Some menu entries are placeholders: scoped delete, cut record, DBClipboard link, associate, DBCalc, DBRegEx, DBSort,
 DBTotal, DBValidation, relations, text file editor, database list, generate create PRG / DBF description.
@@ -103,6 +110,8 @@ DBTotal, DBValidation, relations, text file editor, database list, generate crea
 | [X#](https://www.xsharp.eu/) runtime | Apache License 2.0 |
 | [Newtonsoft.Json](https://www.newtonsoft.com/json) | MIT |
 | [ICSharpCode.TextEditorEx](https://github.com/StefH/ICSharpCode.TextEditorEx) (SharpDevelop text editor) | LGPL-2.1-or-later |
+
+The full notices are in [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
 
 ## License
 [MIT](LICENSE)

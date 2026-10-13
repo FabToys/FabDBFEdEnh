@@ -5,3 +5,14 @@ obj/
 *.user
 *.suo
 *.bak
+
+# data files and logs: never commit real tables, memo files, indexes, settings or logs
+*.dbf
+*.fpt
+*.dbt
+*.cdx
+*.ntx
+*.idx
+*.tbk
+*.log
+*.ini

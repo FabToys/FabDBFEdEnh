@@ -1787,7 +1787,7 @@ PUBLIC CLASS DataWindow INHERIT System.Windows.Forms.Form
             IF cKey:Length > cLimit:Length
                 cKey := cKey:Substring( 0, cLimit:Length )
             ENDIF
-            // case-insensitive, umlauts like the Windows sort order (e.g. "keller", "von Arx")
+            // case-insensitive, accented characters sorted like the Windows sort order
             RETURN Math.Sign( String.Compare( cKey, cLimit, StringComparison.CurrentCultureIgnoreCase ) )
         ENDIF
         IF oLimit IS DateTime
