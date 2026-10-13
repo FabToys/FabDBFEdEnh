@@ -1,0 +1,143 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <Import Project="$(XSharpMsBuildDir)\XSharp.Default.props" />
+  <PropertyGroup>
+    <Name>FabDBFEdEnh</Name>
+    <ProjectGuid>5F271BEB-B7BD-4323-910E-8EA48CF88067</ProjectGuid>
+    <OutputType>WinExe</OutputType>
+    <RootNamespace>FabDBFEd</RootNamespace>
+    <AssemblyName>FabDBFEdEnh</AssemblyName>
+    <TargetFrameworkVersion>v4.7.2</TargetFrameworkVersion>
+    <Nologo>true</Nologo>
+    <GenerateFullPaths>true</GenerateFullPaths>
+    <Dialect>Core</Dialect>
+    <AZ>false</AZ>
+    <NamedArgs>true</NamedArgs>
+    <AllowDot>true</AllowDot>
+    <Unsafe>false</Unsafe>
+    <INS>false</INS>
+    <NS>false</NS>
+    <Undeclared>false</Undeclared>
+    <MemVar>false</MemVar>
+    <InitLocals>false</InitLocals>
+    <NoWin32Manifest>False</NoWin32Manifest>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)' == 'Debug|AnyCPU'" Label="Configuration">
+    <PlatformTarget>AnyCPU</PlatformTarget>
+    <EmitDebugInformation>true</EmitDebugInformation>
+    <DebugType>full</DebugType>
+    <Optimize>false</Optimize>
+    <OutputPath>bin\Debug\</OutputPath>
+    <DefineConstants>DEBUG;TRACE</DefineConstants>
+    <ErrorReport>prompt</ErrorReport>
+    <WarningLevel>4</WarningLevel>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)' == 'Release|AnyCPU'" Label="Configuration">
+    <PlatformTarget>AnyCPU</PlatformTarget>
+    <EmitDebugInformation>false</EmitDebugInformation>
+    <DebugType>pdbonly</DebugType>
+    <Optimize>true</Optimize>
+    <OutputPath>bin\Release\</OutputPath>
+    <DefineConstants>TRACE</DefineConstants>
+    <ErrorReport>prompt</ErrorReport>
+    <WarningLevel>4</WarningLevel>
+  </PropertyGroup>
+  <Import Project="$(XSharpMsBuildDir)\XSharp.targets" />
+  <ItemGroup>
+    <Reference Include="Microsoft.CSharp" />
+    <Reference Include="mscorlib" />
+    <Reference Include="System" />
+    <Reference Include="System.Core" />
+    <Reference Include="System.Data" />
+    <Reference Include="System.Data.DataSetExtensions" />
+    <Reference Include="System.Design" />
+    <Reference Include="System.Drawing" />
+    <Reference Include="System.Windows.Forms" />
+    <Reference Include="System.Xml" />
+    <Reference Include="System.Xml.Linq" />
+    <Reference Include="XSharp.Core">
+      <Name>XSharp.Core</Name>
+      <SpecificVersion>False</SpecificVersion>
+      <Private>True</Private>
+      <HintPath>C:\Program Files (x86)\XSharp\Assemblies\XSharp.Core.dll</HintPath>
+    </Reference>
+    <Reference Include="XSharp.Data">
+      <Name>XSharp.Data</Name>
+      <SpecificVersion>False</SpecificVersion>
+      <Private>True</Private>
+      <HintPath>C:\Program Files (x86)\XSharp\Assemblies\XSharp.Data.dll</HintPath>
+    </Reference>
+    <Reference Include="XSharp.MacroCompiler">
+      <Name>XSharp.MacroCompiler</Name>
+      <SpecificVersion>False</SpecificVersion>
+      <Private>True</Private>
+      <HintPath>C:\Program Files (x86)\XSharp\Assemblies\XSharp.MacroCompiler.dll</HintPath>
+    </Reference>
+    <Reference Include="XSharp.Rdd">
+      <Name>XSharp.Rdd</Name>
+      <SpecificVersion>False</SpecificVersion>
+      <Private>True</Private>
+      <HintPath>C:\Program Files (x86)\XSharp\Assemblies\XSharp.Rdd.dll</HintPath>
+    </Reference>
+    <Reference Include="XSharp.RT">
+      <Name>XSharp.RT</Name>
+      <SpecificVersion>False</SpecificVersion>
+      <Private>True</Private>
+      <HintPath>C:\Program Files (x86)\XSharp\Assemblies\XSharp.RT.dll</HintPath>
+    </Reference>
+  </ItemGroup>
+  <ItemGroup>
+    <!-- Visual Studio uses the NuGet packages; the lib\ folder only serves the XIde project -->
+    <PackageReference Include="ICSharpCode.TextEditorEx">
+      <Version>1.4.0</Version>
+    </PackageReference>
+    <PackageReference Include="Newtonsoft.Json">
+      <Version>13.0.4</Version>
+    </PackageReference>
+  </ItemGroup>
+  <ItemGroup>
+    <Compile Include="AppSettings.prg" />
+    <Compile Include="AssemblyInfo.prg" />
+    <Compile Include="DataWindow.prg" />
+    <Compile Include="DBFStructWindow.Designer.prg">
+      <DependentUpon>DBFStructWindow.prg</DependentUpon>
+    </Compile>
+    <Compile Include="DBFStructWindow.prg">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="FabModel.prg" />
+    <Compile Include="FieldWindow.Designer.prg">
+      <DependentUpon>FieldWindow.prg</DependentUpon>
+    </Compile>
+    <Compile Include="FieldWindow.prg">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="HexaEditor.Designer.prg">
+      <DependentUpon>HexaEditor.prg</DependentUpon>
+    </Compile>
+    <Compile Include="HexaEditor.prg">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="IndexDialogs.prg" />
+    <Compile Include="MainForm.prg" />
+    <Compile Include="MemoReplaceFpt.prg" />
+    <Compile Include="OpenDialog.prg" />
+    <Compile Include="Program.prg" />
+    <Compile Include="SettingsDialogs.prg" />
+    <Compile Include="StructureModify.prg" />
+  </ItemGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="DBFStructWindow.resx">
+      <DependentUpon>DBFStructWindow.prg</DependentUpon>
+      <SubType>Designer</SubType>
+    </EmbeddedResource>
+    <EmbeddedResource Include="FieldWindow.resx">
+      <DependentUpon>FieldWindow.prg</DependentUpon>
+      <SubType>Designer</SubType>
+    </EmbeddedResource>
+    <EmbeddedResource Include="HexaEditor.resx">
+      <DependentUpon>HexaEditor.prg</DependentUpon>
+      <SubType>Designer</SubType>
+    </EmbeddedResource>
+  </ItemGroup>
+</Project>

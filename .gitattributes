@@ -1,0 +1,7 @@
+# text files: normalize line endings, binaries untouched
+* text=auto
+*.dll binary
+*.resources binary
+*.pdb binary
+*.exe binary
+*.sln text eol=crlf

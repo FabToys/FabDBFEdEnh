@@ -1,0 +1,7 @@
+# build output / IDE files
+bin/
+obj/
+.vs/
+*.user
+*.suo
+*.bak
