@@ -19,6 +19,12 @@ PUBLIC CLASS DbfResult
     PUBLIC LockedRec := 0 AS LONG
     /// <summary>Exception text, empty = no error</summary>
     PUBLIC Error  := "" AS STRING
+    /// <summary>The input text could not be converted to the field type (Error holds the message)</summary>
+    PUBLIC Invalid := FALSE AS LOGIC
+    /// <summary>Record number the operation ended on (new record, restored record ...), 0 = none</summary>
+    PUBLIC Rec    := 0 AS LONG
+    /// <summary>Field names that could not be taken over (paste)</summary>
+    PUBLIC BadFields := List<STRING>{} AS List<STRING>
     PUBLIC PROPERTY Failed AS LOGIC GET SELF:Error:Length > 0
 END CLASS
 
@@ -418,6 +424,227 @@ PUBLIC CLASS DbfTable
             IF ! SELF:Exclusive
                 DbUnlock()
             ENDIF
+        CATCH ex AS Exception
+            oResult:Error := ex:Message
+        END TRY
+        RETURN oResult
+
+    // =====================================================================
+    // Writing
+    // =====================================================================
+    // --- Undo: the last field change ---
+    PUBLIC PROPERTY UndoRec   AS LONG   AUTO := 0
+    PUBLIC PROPERTY UndoField AS INT    AUTO := 0
+    PUBLIC PROPERTY UndoValue AS OBJECT AUTO
+    PUBLIC PROPERTY CanUndo   AS LOGIC  GET SELF:UndoRec != 0 .AND. ! SELF:ReadOnly
+
+    /// <summary>Character field with the Binary flag (C:B): shown in the hex viewer, never edited as text</summary>
+    PUBLIC METHOD IsBinaryChar( nIdx AS INT ) AS LOGIC
+        RETURN SELF:aType[nIdx] == "C" .AND. SELF:aBinary[nIdx]
+
+    /// <summary>The field can be edited as text (not read only, not memo, not auto / system, not binary)</summary>
+    PUBLIC METHOD IsWritable( nIdx AS INT ) AS LOGIC
+        RETURN ! SELF:ReadOnly .AND. SELF:aType[nIdx] != "M" .AND. ! SELF:aAuto[nIdx] .AND. ! SELF:IsBinaryChar( nIdx )
+
+    /// <summary>Convert text from an input control to the field type (throws on invalid input)</summary>
+    PUBLIC STATIC METHOD ConvertText( cText AS STRING, cType AS STRING ) AS OBJECT
+        cText := cText:Trim()
+        SWITCH cType
+        CASE "N"
+        CASE "F"
+        CASE "Y"
+        CASE "B"
+            IF cText:Length == 0
+                RETURN 0.0
+            ENDIF
+            RETURN Double.Parse( cText:Replace( "'", "" ):Replace( ",", "." ), CultureInfo.InvariantCulture )
+        CASE "I"
+            IF cText:Length == 0
+                RETURN 0
+            ENDIF
+            RETURN Int32.Parse( cText )
+        CASE "T"
+            IF cText:Length == 0
+                RETURN DateTime.MinValue
+            ENDIF
+            LOCAL dTime AS DateTime
+            IF DateTime.TryParse( cText, CultureInfo.CurrentCulture, DateTimeStyles.None, OUT dTime )
+                RETURN dTime
+            ENDIF
+            RETURN AppSettings.ParseDate( cText )
+        CASE "D"
+            IF cText:Length == 0
+                RETURN DateTime.MinValue
+            ENDIF
+            RETURN AppSettings.ParseDate( cText )
+        CASE "L"
+            LOCAL cUpper := cText:ToUpper():Replace( ".", "" ) AS STRING
+            RETURN cUpper == "T" .OR. cUpper == "Y" .OR. cUpper == "J" .OR. cUpper == "1" .OR. cUpper == "TRUE" .OR. cUpper == "JA"
+        OTHERWISE
+            RETURN cText
+        END SWITCH
+
+    /// <summary>Write text to field nIdx (0-based) of record nRec. Done = 1 on success; nothing happens (Done = 0,
+    /// no error) when the field is not writable.</summary>
+    PUBLIC METHOD WriteField( nRec AS LONG, nIdx AS INT, cText AS STRING ) AS DbfResult
+        LOCAL oResult := DbfResult{} AS DbfResult
+        LOCAL nField  := nIdx + 1 AS INT
+        LOCAL oNew    := NULL AS OBJECT
+        IF ! SELF:IsWritable( nIdx )
+            RETURN oResult
+        ENDIF
+        TRY
+            oNew := DbfTable.ConvertText( cText, SELF:aType[nIdx] )
+        CATCH
+            oResult:Invalid := TRUE
+            oResult:Error   := "Invalid input for field " + SELF:aName[nIdx] + ": " + cText
+            RETURN oResult
+        END TRY
+        TRY
+            SELF:Sel()
+            DbGoto( nRec )
+            IF SELF:TryLock( nRec )
+                SELF:UndoRec   := nRec
+                SELF:UndoField := nField
+                SELF:UndoValue := SELF:oRdd:GetValue( nField )
+                FieldPut( nField, oNew )
+                SELF:AfterWrite()
+                oResult:Done := 1
+            ELSE
+                oResult:Locked    := 1
+                oResult:LockedRec := nRec
+            ENDIF
+        CATCH ex AS Exception
+            oResult:Error := "Error while writing: " + ex:Message
+        END TRY
+        RETURN oResult
+
+    /// <summary>Write a memo value. cOldFull = what the field held, for undo.</summary>
+    PUBLIC METHOD WriteMemo( nRec AS LONG, nIdx AS INT, cNew AS STRING, cOldFull AS STRING ) AS DbfResult
+        LOCAL oResult := DbfResult{} AS DbfResult
+        TRY
+            SELF:Sel()
+            DbGoto( nRec )
+            IF SELF:TryLock( nRec )
+                SELF:UndoRec   := nRec
+                SELF:UndoField := nIdx + 1
+                SELF:UndoValue := cOldFull
+                FieldPut( nIdx + 1, cNew )
+                SELF:AfterWrite()
+                oResult:Done := 1
+            ELSE
+                oResult:Locked    := 1
+                oResult:LockedRec := nRec
+            ENDIF
+        CATCH ex AS Exception
+            oResult:Error := ex:Message
+        END TRY
+        RETURN oResult
+
+    /// <summary>Undo the last field change; Rec = the restored record</summary>
+    PUBLIC METHOD Undo() AS DbfResult
+        LOCAL oResult := DbfResult{} AS DbfResult
+        IF ! SELF:CanUndo
+            RETURN oResult
+        ENDIF
+        TRY
+            SELF:Sel()
+            DbGoto( SELF:UndoRec )
+            IF SELF:TryLock( SELF:UndoRec )
+                FieldPut( SELF:UndoField, SELF:UndoValue )
+                SELF:AfterWrite()
+                oResult:Done := 1
+                oResult:Rec  := SELF:UndoRec
+                SELF:UndoRec := 0
+            ELSE
+                oResult:Locked    := 1
+                oResult:LockedRec := SELF:UndoRec
+            ENDIF
+        CATCH ex AS Exception
+            oResult:Error := ex:Message
+        END TRY
+        RETURN oResult
+
+    /// <summary>Append an empty record; Rec = its record number</summary>
+    PUBLIC METHOD AppendRecord() AS DbfResult
+        LOCAL oResult := DbfResult{} AS DbfResult
+        TRY
+            SELF:Sel()
+            DbAppend()
+            oResult:Rec := (LONG) RecNo()
+            SELF:AfterWrite()
+            oResult:Done := 1
+        CATCH ex AS Exception
+            oResult:Error := ex:Message
+        END TRY
+        RETURN oResult
+
+    // =====================================================================
+    // Records as clipboard values
+    // =====================================================================
+    /// <summary>The values of a record by field name (what DBClipboard holds)</summary>
+    PUBLIC METHOD ReadRecord( nRec AS LONG ) AS Dictionary<STRING, OBJECT>
+        LOCAL oRecord := Dictionary<STRING, OBJECT>{} AS Dictionary<STRING, OBJECT>
+        SELF:Sel()
+        DbGoto( nRec )
+        FOR VAR i := 1 TO SELF:aName:Count
+            TRY
+                oRecord[SELF:aName[i - 1]] := SELF:oRdd:GetValue( i )
+            CATCH
+                NOP
+            END TRY
+        NEXT
+        RETURN oRecord
+
+    /// <summary>Write the values into the CURRENT record (same field names); auto fields are skipped, fields that
+    /// refuse the value are listed in aError</summary>
+    PUBLIC METHOD WriteRecord( oRecord AS Dictionary<STRING, OBJECT>, aError AS List<STRING> ) AS VOID
+        FOR VAR i := 1 TO SELF:aName:Count
+            LOCAL cName := SELF:aName[i - 1] AS STRING
+            IF oRecord:ContainsKey( cName ) .AND. ! SELF:aAuto[i - 1]
+                TRY
+                    FieldPut( i, oRecord[cName] )
+                CATCH
+                    IF ! aError:Contains( cName )
+                        aError:Add( cName )
+                    ENDIF
+                END TRY
+            ENDIF
+        NEXT
+        RETURN
+
+    /// <summary>Overwrite record nRec with the values</summary>
+    PUBLIC METHOD PasteInto( nRec AS LONG, oRecord AS Dictionary<STRING, OBJECT> ) AS DbfResult
+        LOCAL oResult := DbfResult{} AS DbfResult
+        TRY
+            SELF:Sel()
+            DbGoto( nRec )
+            IF SELF:TryLock( nRec )
+                SELF:WriteRecord( oRecord, oResult:BadFields )
+                SELF:AfterWrite()
+                oResult:Done := 1
+                oResult:Rec  := nRec
+            ELSE
+                oResult:Locked    := 1
+                oResult:LockedRec := nRec
+            ENDIF
+        CATCH ex AS Exception
+            oResult:Error := ex:Message
+        END TRY
+        RETURN oResult
+
+    /// <summary>Append one new record per entry; Rec = the last one</summary>
+    PUBLIC METHOD PasteAppend( aRecords AS List<Dictionary<STRING, OBJECT>> ) AS DbfResult
+        LOCAL oResult := DbfResult{} AS DbfResult
+        TRY
+            SELF:Sel()
+            FOREACH oRecord AS Dictionary<STRING, OBJECT> IN aRecords
+                DbAppend()
+                SELF:WriteRecord( oRecord, oResult:BadFields )
+                oResult:Rec := (LONG) RecNo()
+                oResult:Done++
+            NEXT
+            SELF:AfterWrite()
         CATCH ex AS Exception
             oResult:Error := ex:Message
         END TRY

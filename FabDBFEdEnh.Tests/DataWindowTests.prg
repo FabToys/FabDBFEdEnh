@@ -1,4 +1,4 @@
-USING System
+﻿USING System
 USING System.Threading
 USING XSharp
 USING XSharp.RDD.Support
@@ -58,6 +58,38 @@ PUBLIC CLASS DataWindowTests
             oWin:Close()
             oWin:Dispose()
         FINALLY
+            oData:Dispose()
+        END TRY
+        RETURN
+
+    [Fact];
+    PUBLIC METHOD WriteUndoAppendPaste_WorkThroughTheWindow() AS VOID
+        RunSta( { => DataWindowTests.EditAndPaste() } )
+        RETURN
+
+    PRIVATE STATIC METHOD EditAndPaste() AS VOID
+        VAR oData := TestData{}
+        TRY
+            LOCAL aFields := <RddFieldInfo>{ TestData.Field( "NAME", "C", 10, 0 ), TestData.Field( "QTY", "N", 5, 0 ) } AS RddFieldInfo[]
+            LOCAL cFile := oData:CreateTable( "edit", aFields ) AS STRING
+            oData:Append( cFile, <OBJECT>{ "ONE", 1 } )
+            LOCAL oWin := DataWindow{} AS DataWindow
+            Assert.True( oWin:OpenFile( cFile, "DBFCDX", TRUE, FALSE, TRUE, FALSE, TRUE, FALSE ) )
+            // field write and undo
+            Assert.True( oWin:WriteField( 1, 1, "7" ) )
+            oWin:GoToCloseRec( 1, FALSE )
+            oWin:Undo()
+            // copy record 1 to the clipboard and paste it as a new record (no dialogs on this path)
+            DbClip.Records:Clear()
+            oWin:CopyRecord( FALSE )
+            Assert.Equal( 1, DbClip.Records:Count )
+            oWin:PasteAppend( FALSE )
+            oWin:AppendRecord()
+            Assert.Equal( 0, oWin:CountDeleted() )
+            oWin:Close()
+            oWin:Dispose()
+        FINALLY
+            DbClip.Records:Clear()
             oData:Dispose()
         END TRY
         RETURN

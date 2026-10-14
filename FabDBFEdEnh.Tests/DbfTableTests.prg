@@ -167,6 +167,148 @@ PUBLIC CLASS DbfTableTests
         END TRY
         RETURN
 
+    // ------------------------------------------------------------------
+    // Slice 2: writing, undo, append, clipboard
+    // ------------------------------------------------------------------
+    PRIVATE STATIC METHOD Qty( oTable AS DbfTable, nRec AS LONG ) AS DOUBLE
+        RETURN Convert.ToDouble( oTable:ReadRecord( nRec )["QTY"] )
+
+    [Fact];
+    PUBLIC METHOD WriteField_ChangesValueAndUndoRestoresIt() AS VOID
+        VAR oData := TestData{}
+        TRY
+            VAR oTable := OpenTable( CreateFive( oData ), TRUE )
+            Assert.False( oTable:CanUndo )
+            VAR oResult := oTable:WriteField( 2, 1, "42" )
+            Assert.Equal( 1, oResult:Done )
+            Assert.Equal( 42.0, Qty( oTable, 2 ) )
+            Assert.True( oTable:CanUndo )
+            VAR oUndo := oTable:Undo()
+            Assert.Equal( 1, oUndo:Done )
+            Assert.Equal( 2L, oUndo:Rec )
+            Assert.Equal( 2.0, Qty( oTable, 2 ) )
+            Assert.False( oTable:CanUndo )
+            oTable:Close()
+        FINALLY
+            oData:Dispose()
+        END TRY
+        RETURN
+
+    [Fact];
+    PUBLIC METHOD WriteField_RejectsInvalidInputAndKeepsValue() AS VOID
+        VAR oData := TestData{}
+        TRY
+            VAR oTable := OpenTable( CreateFive( oData ), TRUE )
+            VAR oResult := oTable:WriteField( 3, 1, "abc" )
+            Assert.True( oResult:Invalid )
+            Assert.Equal( 0, oResult:Done )
+            Assert.Equal( 3.0, Qty( oTable, 3 ) )
+            Assert.False( oTable:CanUndo )
+            oTable:Close()
+        FINALLY
+            oData:Dispose()
+        END TRY
+        RETURN
+
+    [Fact];
+    PUBLIC METHOD WriteField_DoesNothingOnReadOnlyFile() AS VOID
+        VAR oData := TestData{}
+        TRY
+            LOCAL cFile := CreateFive( oData ) AS STRING
+            LOCAL oTable := DbfTable{} AS DbfTable
+            LOCAL cError := "" AS STRING
+            Assert.True( oTable:Open( cFile, "DBFCDX", FALSE, TRUE, REF cError ), cError )
+            Assert.False( oTable:IsWritable( 1 ) )
+            VAR oResult := oTable:WriteField( 1, 1, "99" )
+            Assert.Equal( 0, oResult:Done )
+            Assert.False( oResult:Failed )
+            Assert.Equal( 1.0, Qty( oTable, 1 ) )
+            oTable:Close()
+        FINALLY
+            oData:Dispose()
+        END TRY
+        RETURN
+
+    [Fact];
+    PUBLIC METHOD AppendRecord_AddsEmptyRecordAndReturnsItsNumber() AS VOID
+        VAR oData := TestData{}
+        TRY
+            VAR oTable := OpenTable( CreateFive( oData ), TRUE )
+            VAR oResult := oTable:AppendRecord()
+            Assert.Equal( 1, oResult:Done )
+            Assert.Equal( 6L, oResult:Rec )
+            oTable:LoadList()
+            Assert.Equal( 6, oTable:Recs:Count )
+            oTable:Close()
+        FINALLY
+            oData:Dispose()
+        END TRY
+        RETURN
+
+    [Fact];
+    PUBLIC METHOD ConvertText_HandlesTypes() AS VOID
+        Assert.Equal( 1.5, (DOUBLE) DbfTable.ConvertText( "1,5", "N" ) )
+        Assert.Equal( 1250.0, (DOUBLE) DbfTable.ConvertText( "1'250", "N" ) )
+        Assert.Equal( 0.0, (DOUBLE) DbfTable.ConvertText( "", "N" ) )
+        Assert.Equal( TRUE, (LOGIC) DbfTable.ConvertText( "J", "L" ) )
+        Assert.Equal( FALSE, (LOGIC) DbfTable.ConvertText( "x", "L" ) )
+        Assert.Equal( DateTime.MinValue, (DateTime) DbfTable.ConvertText( "", "D" ) )
+        Assert.Equal( "text", (STRING) DbfTable.ConvertText( "  text ", "C" ) )
+        Assert.Throws<FormatException>( { => DbfTable.ConvertText( "abc", "N" ) } )
+        RETURN
+
+    [Fact];
+    PUBLIC METHOD PasteAppend_AddsCopiesOfClipboardRecords() AS VOID
+        VAR oData := TestData{}
+        TRY
+            VAR oTable := OpenTable( CreateFive( oData ), TRUE )
+            VAR aClip := List<Dictionary<STRING, OBJECT>>{}
+            aClip:Add( oTable:ReadRecord( 2 ) )
+            aClip:Add( oTable:ReadRecord( 4 ) )
+            VAR oResult := oTable:PasteAppend( aClip )
+            Assert.Equal( 2, oResult:Done )
+            Assert.Equal( 7L, oResult:Rec )
+            Assert.Empty( oResult:BadFields )
+            Assert.Equal( 2.0, Qty( oTable, 6 ) )
+            Assert.Equal( 4.0, Qty( oTable, 7 ) )
+            oTable:Close()
+        FINALLY
+            oData:Dispose()
+        END TRY
+        RETURN
+
+    [Fact];
+    PUBLIC METHOD PasteInto_OverwritesTheRecord() AS VOID
+        VAR oData := TestData{}
+        TRY
+            VAR oTable := OpenTable( CreateFive( oData ), TRUE )
+            VAR oResult := oTable:PasteInto( 1, oTable:ReadRecord( 5 ) )
+            Assert.Equal( 1, oResult:Done )
+            Assert.Equal( 5.0, Qty( oTable, 1 ) )
+            oTable:Close()
+        FINALLY
+            oData:Dispose()
+        END TRY
+        RETURN
+
+    [Fact];
+    PUBLIC METHOD WriteMemo_StoresTextAndAllowsUndo() AS VOID
+        VAR oData := TestData{}
+        TRY
+            LOCAL aFields := <RddFieldInfo>{ TestData.Field( "NAME", "C", 10, 0 ), TestData.Field( "NOTE", "M", 10, 0 ) } AS RddFieldInfo[]
+            LOCAL cFile := oData:CreateTable( "memo", aFields ) AS STRING
+            oData:Append( cFile, <OBJECT>{ "ONE", "first" } )
+            VAR oTable := OpenTable( cFile, TRUE )
+            Assert.Equal( 1, oTable:WriteMemo( 1, 1, "second", "first" ):Done )
+            Assert.Equal( "second", Convert.ToString( oTable:ReadRecord( 1 )["NOTE"] ):Trim() )
+            Assert.Equal( 1, oTable:Undo():Done )
+            Assert.Equal( "first", Convert.ToString( oTable:ReadRecord( 1 )["NOTE"] ):Trim() )
+            oTable:Close()
+        FINALLY
+            oData:Dispose()
+        END TRY
+        RETURN
+
 END CLASS
 
 END NAMESPACE

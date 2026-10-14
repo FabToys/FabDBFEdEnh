@@ -55,10 +55,6 @@ PUBLIC CLASS DataWindow INHERIT System.Windows.Forms.Form
     PRIVATE aCache    := List<OBJECT>{} AS List<OBJECT>
     PRIVATE lCacheDel AS LOGIC
 
-    // --- Undo (last field change) ---
-    PRIVATE nUndoRec  := 0 AS LONG
-    PRIVATE nUndoField := 0 AS INT
-    PRIVATE oUndoValue AS OBJECT
 
     // --- Controls ---
     PRIVATE grid      AS DbGrid
@@ -562,35 +558,16 @@ PUBLIC CLASS DataWindow INHERIT System.Windows.Forms.Form
 
     /// <summary>Write text to field nIdx (0-based) of record nRec; returns TRUE on success</summary>
     PUBLIC METHOD WriteField( nRec AS LONG, nIdx AS INT, cText AS STRING ) AS LOGIC
-        LOCAL nField := nIdx + 1 AS INT
-        LOCAL cType  := SELF:aFieldType[nIdx] AS STRING
-        LOCAL oNew  := NULL AS OBJECT
-        LOCAL lOk   := FALSE AS LOGIC
-        IF SELF:lReadOnly .OR. cType == "M" .OR. SELF:aFieldAuto[nIdx] .OR. SELF:IsBinaryChar( nIdx )
-            RETURN FALSE
+        LOCAL oResult := SELF:oTable:WriteField( nRec, nIdx, cText ) AS DbfResult
+        IF oResult:Invalid
+            MessageBox.Show( oResult:Error, "Input", MessageBoxButtons.OK, MessageBoxIcon.Warning )
+        ELSEIF oResult:Locked > 0
+            SELF:LockedMessage( nRec )
+        ELSEIF oResult:Failed
+            MessageBox.Show( oResult:Error, "Save", MessageBoxButtons.OK, MessageBoxIcon.Error )
         ENDIF
-        TRY
-            oNew := SELF:ConvertText( cText, cType )
-        CATCH
-            MessageBox.Show( "Invalid input for field " + SELF:aFieldName[nIdx] + ": " + cText, "Input", MessageBoxButtons.OK, MessageBoxIcon.Warning )
-            RETURN FALSE
-        END TRY
-        TRY
-            SELF:Sel()
-            DbGoto( nRec )
-            IF SELF:LockRecord( nRec )
-                SELF:nUndoRec  := nRec
-                SELF:nUndoField := nField
-                SELF:oUndoValue := SELF:oRdd:GetValue( nField )
-                FieldPut( nField, oNew )
-                SELF:AfterWrite()
-                lOk := TRUE
-            ENDIF
-        CATCH ex AS Exception
-            MessageBox.Show( "Error while writing: " + ex:Message, "Save", MessageBoxButtons.OK, MessageBoxIcon.Error )
-        END TRY
         SELF:ClearCache()
-        RETURN lOk
+        RETURN oResult:Done > 0
 
     PRIVATE METHOD IsKeyField( nIdx AS INT ) AS LOGIC
         RETURN SELF:cKeyExpression:Length > 0 .AND. Regex.IsMatch( SELF:cKeyExpression, "\b" + Regex.Escape( SELF:aFieldName[nIdx] ) + "\b" )
@@ -606,44 +583,6 @@ PUBLIC CLASS DataWindow INHERIT System.Windows.Forms.Form
             ENDIF
         ENDIF
         RETURN
-
-    // Convert text from the grid to the field type (throws on invalid input)
-    PRIVATE METHOD ConvertText( cText AS STRING, cType AS STRING ) AS OBJECT
-        cText := cText:Trim()
-        SWITCH cType
-        CASE "N"
-        CASE "F"
-        CASE "Y"
-        CASE "B"
-            IF cText:Length == 0
-                RETURN 0.0
-            ENDIF
-            RETURN Double.Parse( cText:Replace( "'", "" ):Replace( ",", "." ), CultureInfo.InvariantCulture )
-        CASE "I"
-            IF cText:Length == 0
-                RETURN 0
-            ENDIF
-            RETURN Int32.Parse( cText )
-        CASE "T"
-            IF cText:Length == 0
-                RETURN DateTime.MinValue
-            ENDIF
-            LOCAL dTime AS DateTime
-            IF DateTime.TryParse( cText, CultureInfo.CurrentCulture, DateTimeStyles.None, OUT dTime )
-                RETURN dTime
-            ENDIF
-            RETURN AppSettings.ParseDate( cText )
-        CASE "D"
-            IF cText:Length == 0
-                RETURN DateTime.MinValue
-            ENDIF
-            RETURN AppSettings.ParseDate( cText )
-        CASE "L"
-            LOCAL cUpper := cText:ToUpper():Replace( ".", "" ) AS STRING
-            RETURN cUpper == "T" .OR. cUpper == "Y" .OR. cUpper == "J" .OR. cUpper == "1" .OR. cUpper == "TRUE" .OR. cUpper == "JA"
-        OTHERWISE
-            RETURN cText
-        END SWITCH
 
     // Record lock in shared mode
     PRIVATE METHOD LockRecord( nRec AS LONG ) AS LOGIC
@@ -695,19 +634,12 @@ PUBLIC CLASS DataWindow INHERIT System.Windows.Forms.Form
             RETURN
         ENDIF
         LOCAL cNew := dlg:Content AS STRING
-        TRY
-            SELF:Sel()
-            DbGoto( nRec )
-            IF SELF:LockRecord( nRec )
-                SELF:nUndoRec  := nRec
-                SELF:nUndoField := nIdx + 1
-                SELF:oUndoValue := cFull
-                FieldPut( nIdx + 1, cNew )
-                SELF:AfterWrite()
-            ENDIF
-        CATCH ex AS Exception
-            MessageBox.Show( "The memo could not be saved: " + ex:Message, "Memo", MessageBoxButtons.OK, MessageBoxIcon.Error )
-        END TRY
+        LOCAL oResult := SELF:oTable:WriteMemo( nRec, nIdx, cNew, cFull ) AS DbfResult
+        IF oResult:Locked > 0
+            SELF:LockedMessage( nRec )
+        ELSEIF oResult:Failed
+            MessageBox.Show( "The memo could not be saved: " + oResult:Error, "Memo", MessageBoxButtons.OK, MessageBoxIcon.Error )
+        ENDIF
         SELF:ClearCache()
         SELF:grid:Invalidate()
         IF SELF:lFormView
@@ -1027,15 +959,12 @@ PUBLIC CLASS DataWindow INHERIT System.Windows.Forms.Form
         IF SELF:ReadOnlyMessage()
             RETURN
         ENDIF
-        TRY
-            SELF:Sel()
-            DbAppend()
-            LOCAL nNew := (LONG) RecNo() AS LONG
-            SELF:AfterWrite()
-            SELF:LoadList( nNew )
-        CATCH ex AS Exception
-            MessageBox.Show( "Append not possible: " + ex:Message, "Append" )
-        END TRY
+        LOCAL oResult := SELF:oTable:AppendRecord() AS DbfResult
+        IF oResult:Failed
+            MessageBox.Show( "Append not possible: " + oResult:Error, "Append" )
+            RETURN
+        ENDIF
+        SELF:LoadList( oResult:Rec )
         RETURN
 
     PUBLIC METHOD DeleteRecord( lDelete AS LOGIC ) AS VOID
@@ -1142,21 +1071,17 @@ PUBLIC CLASS DataWindow INHERIT System.Windows.Forms.Form
 
     // undo the last field change
     PUBLIC METHOD Undo() AS VOID
-        IF SELF:nUndoRec == 0 .OR. SELF:lReadOnly
+        IF ! SELF:oTable:CanUndo
             RETURN
         ENDIF
-        TRY
-            SELF:Sel()
-            DbGoto( SELF:nUndoRec )
-            IF SELF:LockRecord( SELF:nUndoRec )
-                FieldPut( SELF:nUndoField, SELF:oUndoValue )
-                SELF:AfterWrite()
-                SELF:GoToCloseRec( SELF:nUndoRec, FALSE )
-                SELF:nUndoRec := 0
-            ENDIF
-        CATCH ex AS Exception
-            MessageBox.Show( ex:Message, "Undo" )
-        END TRY
+        LOCAL oResult := SELF:oTable:Undo() AS DbfResult
+        IF oResult:Locked > 0
+            SELF:LockedMessage( oResult:LockedRec )
+        ELSEIF oResult:Failed
+            MessageBox.Show( oResult:Error, "Undo" )
+        ELSEIF oResult:Done > 0
+            SELF:GoToCloseRec( oResult:Rec, FALSE )
+        ENDIF
         SELF:ClearCache()
         SELF:grid:Invalidate()
         RETURN
@@ -1193,36 +1118,11 @@ PUBLIC CLASS DataWindow INHERIT System.Windows.Forms.Form
         IF nRec == 0
             RETURN
         ENDIF
-        LOCAL oRecord := Dictionary<STRING, OBJECT>{} AS Dictionary<STRING, OBJECT>
-        SELF:Sel()
-        DbGoto( nRec )
-        FOR VAR i := 1 TO SELF:nFields
-            TRY
-                oRecord[SELF:aFieldName[i - 1]] := SELF:oRdd:GetValue( i )
-            CATCH
-                NOP
-            END TRY
-        NEXT
+        LOCAL oRecord := SELF:oTable:ReadRecord( nRec ) AS Dictionary<STRING, OBJECT>
         IF ! lAdditive
             DbClip.Records:Clear()
         ENDIF
         DbClip.Records:Add( oRecord )
-        RETURN
-
-    // Write the values from the clipboard into the current record (same field names)
-    PRIVATE METHOD WriteRecord( oRecord AS Dictionary<STRING, OBJECT>, aError AS List<STRING> ) AS VOID
-        FOR VAR i := 1 TO SELF:nFields
-            LOCAL cName := SELF:aFieldName[i - 1] AS STRING
-            IF oRecord:ContainsKey( cName ) .AND. ! SELF:aFieldAuto[i - 1]
-                TRY
-                    FieldPut( i, oRecord[cName] )
-                CATCH
-                    IF ! aError:Contains( cName )
-                        aError:Add( cName )
-                    ENDIF
-                END TRY
-            ENDIF
-        NEXT
         RETURN
 
     PUBLIC METHOD PasteRecord() AS VOID
@@ -1237,42 +1137,32 @@ PUBLIC CLASS DataWindow INHERIT System.Windows.Forms.Form
                             MessageBoxButtons.YesNo, MessageBoxIcon.Question ) != DialogResult.Yes
             RETURN
         ENDIF
-        LOCAL aError := List<STRING>{} AS List<STRING>
-        TRY
-            SELF:Sel()
-            DbGoto( nRec )
-            IF SELF:LockRecord( nRec )
-                SELF:WriteRecord( DbClip.Records[0], aError )
-                SELF:AfterWrite()
-            ENDIF
-        CATCH ex AS Exception
-            MessageBox.Show( ex:Message, "Paste" )
-        END TRY
+        LOCAL oResult := SELF:oTable:PasteInto( nRec, DbClip.Records[0] ) AS DbfResult
+        IF oResult:Locked > 0
+            SELF:LockedMessage( nRec )
+        ELSEIF oResult:Failed
+            MessageBox.Show( oResult:Error, "Paste" )
+        ENDIF
         SELF:ClearCache()
         SELF:grid:Invalidate()
-        SELF:ReportError( aError )
+        SELF:ReportError( oResult:BadFields )
         RETURN
 
     PUBLIC METHOD PasteAppend( lAll AS LOGIC ) AS VOID
         IF SELF:ReadOnlyMessage() .OR. DbClip.Records:Count == 0
             RETURN
         ENDIF
-        LOCAL aError := List<STRING>{} AS List<STRING>
+        LOCAL aRecords := List<Dictionary<STRING, OBJECT>>{} AS List<Dictionary<STRING, OBJECT>>
         LOCAL nNum := IIF( lAll, DbClip.Records:Count, 1 ) AS INT
-        LOCAL nNew := 0 AS LONG
-        TRY
-            SELF:Sel()
-            FOR VAR i := 0 TO nNum - 1
-                DbAppend()
-                SELF:WriteRecord( DbClip.Records[i], aError )
-                nNew := (LONG) RecNo()
-            NEXT
-            SELF:AfterWrite()
-        CATCH ex AS Exception
-            MessageBox.Show( ex:Message, "Paste Append" )
-        END TRY
-        SELF:LoadList( nNew )
-        SELF:ReportError( aError )
+        FOR VAR i := 0 TO nNum - 1
+            aRecords:Add( DbClip.Records[i] )
+        NEXT
+        LOCAL oResult := SELF:oTable:PasteAppend( aRecords ) AS DbfResult
+        IF oResult:Failed
+            MessageBox.Show( oResult:Error, "Paste Append" )
+        ENDIF
+        SELF:LoadList( oResult:Rec )
+        SELF:ReportError( oResult:BadFields )
         RETURN
 
     PRIVATE METHOD ReportError( aError AS List<STRING> ) AS VOID
@@ -1393,7 +1283,7 @@ PUBLIC CLASS DataWindow INHERIT System.Windows.Forms.Form
     // =====================================================================
     /// <summary>Character field with the Binary flag: raw data, not text</summary>
     PRIVATE METHOD IsBinaryChar( nIdx AS INT ) AS LOGIC
-        RETURN SELF:aFieldType[nIdx] == "C" .AND. SELF:aFieldBinary[nIdx]
+        RETURN SELF:oTable:IsBinaryChar( nIdx )
 
     /// <summary>Raw bytes of a field, read directly from the DBF record (IOException when this window holds the file exclusively)</summary>
     PRIVATE METHOD ReadFieldBytes( nRec AS LONG, nIdx AS INT ) AS BYTE[]
@@ -2014,7 +1904,7 @@ PUBLIC CLASS DataWindow INHERIT System.Windows.Forms.Form
             IF dlg:IsExpression
                 oCb := MCompile( dlg:InputValue )
             ELSE
-                oFixed := SELF:ConvertText( dlg:InputValue, IIF( cType == "M", "C", cType ) )
+                oFixed := DbfTable.ConvertText( dlg:InputValue, IIF( cType == "M", "C", cType ) )
             ENDIF
             IF dlg:Condition:Length > 0
                 oFor := MCompile( dlg:Condition )
