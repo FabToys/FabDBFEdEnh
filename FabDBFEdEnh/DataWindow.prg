@@ -23,7 +23,6 @@ PUBLIC CLASS DataWindow INHERIT System.Windows.Forms.Form
     PRIVATE oTable := DbfTable{} AS DbfTable
 
     // The window reads the table state through these (kept under the old names)
-    PRIVATE PROPERTY oRdd        AS IRdd         GET SELF:oTable:Rdd
     PRIVATE PROPERTY cFile       AS STRING       GET SELF:oTable:FileName
     PRIVATE PROPERTY cDriver     AS STRING       GET SELF:oTable:Driver
     PRIVATE PROPERTY nFields     AS INT          GET SELF:oTable:FieldCount
@@ -248,10 +247,10 @@ PUBLIC CLASS DataWindow INHERIT System.Windows.Forms.Form
 
     PUBLIC METHOD SetTitle() AS VOID
         LOCAL cName := IIF( SELF:lFullPath, SELF:cFile, Path.GetFileNameWithoutExtension( SELF:cFile ):ToUpper() ) AS STRING
-        SELF:Sel()
-        SELF:Text := cName + " (" + Convert.ToString( (LONG) LastRec() ) + " Records  ANSI-" + SELF:Mode + ")" + ;
+        LOCAL nTotal := SELF:oTable:RecordCount() AS LONG
+        SELF:Text := cName + " (" + Convert.ToString( nTotal ) + " Records  ANSI-" + SELF:Mode + ")" + ;
             IIF( SELF:cFilterText:Length > 0, "  FILTER", "" ) + IIF( SELF:oScopeFrom != NULL .OR. SELF:oScopeTo != NULL, "  SCOPE", "" ) + ;
-            IIF( SELF:aRecs:Count < (LONG) LastRec(), "  [" + Convert.ToString( SELF:aRecs:Count ) + " angezeigt]", "" )
+            IIF( SELF:aRecs:Count < nTotal, "  [" + Convert.ToString( SELF:aRecs:Count ) + " shown]", "" )
         RETURN
 
     // =====================================================================
@@ -281,7 +280,7 @@ PUBLIC CLASS DataWindow INHERIT System.Windows.Forms.Form
 
         FOR VAR i := 1 TO SELF:nFields
             LOCAL cType := SELF:aFieldType[i - 1] AS STRING
-            LOCAL nLen := (INT) (LONG) SELF:oRdd:FieldInfo( i, DBS_LEN, NULL ) AS INT
+            LOCAL nLen := SELF:oTable:FieldLength[i - 1] AS INT
             oCol := DataGridViewTextBoxColumn{}
             oCol:Name       := "F" + Convert.ToString( i )
             oCol:HeaderText := SELF:aFieldName[i - 1]
@@ -349,32 +348,11 @@ PUBLIC CLASS DataWindow INHERIT System.Windows.Forms.Form
         ENDIF
         // Protect reading against re-entry: if another repaint comes in while reading
         // it must not move the record pointer (otherwise fields from 2 records in one row)
-        LOCAL aValues := List<OBJECT>{} AS List<OBJECT>
+        LOCAL aValues := NULL AS List<OBJECT>
         LOCAL lDel   := FALSE AS LOGIC
         SELF:lReading := TRUE
         TRY
-            FOR VAR nAttempt := 1 TO 3
-                SELF:Sel()
-                DbGoto( nRec )
-                aValues:Clear()
-                FOR VAR i := 1 TO SELF:nFields
-                    LOCAL oVal := NULL AS OBJECT
-                    TRY
-                        IF ! lMemos .AND. SELF:aFieldType[i - 1] == "M"
-                            oVal := SELF:MemoPreview( SELF:oRdd:GetValue( i ) )      // Grid: keep only the preview
-                        ELSE
-                            oVal := SELF:oRdd:GetValue( i )
-                        ENDIF
-                    CATCH
-                        oVal := "<Error>"
-                    END TRY
-                    aValues:Add( oVal )
-                NEXT
-                lDel := Deleted()
-                IF (LONG) RecNo() == nRec
-                    EXIT
-                ENDIF
-            NEXT
+            aValues := SELF:oTable:ReadRow( nRec, lMemos, REF lDel )
         FINALLY
             SELF:lReading := FALSE
         END TRY
@@ -427,24 +405,12 @@ PUBLIC CLASS DataWindow INHERIT System.Windows.Forms.Form
         SELF:oRows:Clear()
         RETURN
 
-    // Memo for the grid display: first 200 characters, line breaks as spaces
-    PRIVATE METHOD MemoPreview( oValue AS OBJECT ) AS STRING
-        IF oValue == NULL
-            RETURN ""
-        ENDIF
-        LOCAL cMemo := oValue:ToString() AS STRING
-        IF cMemo:Length > 400
-            cMemo := cMemo:Substring( 0, 400 )
-        ENDIF
-        cMemo := cMemo:Replace( e"\r\n", " " ):Replace( e"\n", " " ):Replace( e"\r", " " ):TrimEnd( <CHAR>{ c' ', (CHAR) 0 } )
-        RETURN IIF( cMemo:Length > 200, cMemo:Substring( 0, 200 ) + "...", cMemo )
-
     PRIVATE METHOD Display( nIdx AS INT ) AS STRING
         LOCAL oValue := SELF:aCache[nIdx] AS OBJECT
         LOCAL cType  := SELF:aFieldType[nIdx] AS STRING
         IF cType == "M"
             IF SELF:lCacheMemo
-                RETURN SELF:MemoPreview( oValue )
+                RETURN DbfTable.MemoPreview( oValue )
             ENDIF
             RETURN IIF( oValue == NULL, "", (STRING) oValue )     // Preview from LoadCache
         ENDIF
@@ -859,7 +825,7 @@ PUBLIC CLASS DataWindow INHERIT System.Windows.Forms.Form
         RETURN
 
     PRIVATE METHOD Order_Changed( sender AS OBJECT, e AS EventArgs ) AS VOID
-        IF SELF:lOrderLoad .OR. SELF:oRdd == NULL
+        IF SELF:lOrderLoad .OR. ! SELF:oTable:IsOpen
             RETURN
         ENDIF
         LOCAL nRec := SELF:CurrentRec() AS LONG
@@ -1141,80 +1107,12 @@ PUBLIC CLASS DataWindow INHERIT System.Windows.Forms.Form
     // =====================================================================
     // Binary memo fields: shown in the hex viewer
     // =====================================================================
-    /// <summary>Raw content of a memo block, read directly from the FPT file (FoxPro / VFP memo files).
-    /// Returns NULL when it cannot be read this way (no FPT file, DBT memo, block outside the file ...).</summary>
-    PRIVATE METHOD ReadMemoBytes( nRec AS LONG, nIdx AS INT ) AS BYTE[]
-        LOCAL cFpt := Path.ChangeExtension( SELF:cFile, ".fpt" ) AS STRING
-        IF ! File.Exists( cFpt )
-            RETURN NULL
-        ENDIF
-        SELF:Sel()
-        // position of the memo pointer inside the record (byte 0 = deleted flag)
-        LOCAL nOffset := 1 AS INT
-        FOR VAR i := 1 TO nIdx
-            nOffset += (INT) (LONG) SELF:oRdd:FieldInfo( i, DBS_LEN, NULL )
-        NEXT
-        LOCAL nPtrLen := (INT) (LONG) SELF:oRdd:FieldInfo( nIdx + 1, DBS_LEN, NULL ) AS INT
-        LOCAL nBlockNo := 0 AS INT64
-        LOCAL fs := FileStream{ SELF:cFile, FileMode.Open, FileAccess.Read, FileShare.ReadWrite } AS FileStream
-        TRY
-            LOCAL aHeader := BYTE[]{ 12 } AS BYTE[]
-            fs:Read( aHeader, 0, 12 )
-            LOCAL nHdrLen := BitConverter.ToUInt16( aHeader, 8 ) AS INT
-            LOCAL nRecLen := BitConverter.ToUInt16( aHeader, 10 ) AS INT
-            LOCAL aPtr := BYTE[]{ nPtrLen } AS BYTE[]
-            fs:Seek( (INT64) nHdrLen + (INT64) ( nRec - 1 ) * nRecLen + nOffset, SeekOrigin.Begin )
-            fs:Read( aPtr, 0, nPtrLen )
-            IF nPtrLen == 4
-                nBlockNo := BitConverter.ToUInt32( aPtr, 0 )                 // VFP : 4 byte binary, little endian
-            ELSE
-                // FoxPro 2.x : 10 digits as text
-                IF ! Int64.TryParse( System.Text.Encoding.ASCII.GetString( aPtr ):Trim(), OUT nBlockNo )
-                    nBlockNo := 0
-                ENDIF
-            ENDIF
-        FINALLY
-            fs:Close()
-        END TRY
-        IF nBlockNo == 0
-            RETURN BYTE[]{ 0 }                                              // empty memo
-        ENDIF
-        LOCAL ft := FileStream{ cFpt, FileMode.Open, FileAccess.Read, FileShare.ReadWrite } AS FileStream
-        TRY
-            LOCAL aHead := BYTE[]{ 8 } AS BYTE[]
-            ft:Read( aHead, 0, 8 )
-            LOCAL aTwo := BYTE[]{ 2 } AS BYTE[]
-            Array.Copy( aHead, 6, aTwo, 0, 2 )
-            Array.Reverse( aTwo )                                           // block size : big endian
-            LOCAL nBlockSize := (INT64) BitConverter.ToUInt16( aTwo, 0 ) AS INT64
-            IF nBlockSize <= 0 .OR. nBlockNo * nBlockSize + 8 > ft:Length
-                RETURN NULL
-            ENDIF
-            ft:Seek( nBlockNo * nBlockSize, SeekOrigin.Begin )
-            LOCAL aBlock := BYTE[]{ 8 } AS BYTE[]                           // block header : type (4) + length (4), both big endian
-            ft:Read( aBlock, 0, 8 )
-            LOCAL aFour := BYTE[]{ 4 } AS BYTE[]
-            Array.Copy( aBlock, 4, aFour, 0, 4 )
-            Array.Reverse( aFour )
-            LOCAL nDataLen := (INT64) BitConverter.ToUInt32( aFour, 0 ) AS INT64
-            IF nDataLen < 0 .OR. nDataLen > 268435456 .OR. ft:Position + nDataLen > ft:Length
-                RETURN NULL
-            ENDIF
-            LOCAL aData := BYTE[]{ (INT) nDataLen } AS BYTE[]
-            IF nDataLen > 0
-                ft:Read( aData, 0, (INT) nDataLen )
-            ENDIF
-            RETURN aData
-        FINALLY
-            ft:Close()
-        END TRY
-
     /// <summary>Shows the content of a binary memo field (record nRec, field nIdx) in the hex viewer</summary>
     PRIVATE METHOD ShowBinaryMemo( nRec AS LONG, nIdx AS INT ) AS VOID
         LOCAL aBytes := NULL AS BYTE[]
         TRY
             SELF:Commit()
-            aBytes := SELF:ReadMemoBytes( nRec, nIdx )
+            aBytes := SELF:oTable:ReadMemoBytes( nRec, nIdx )
         CATCH ex AS IOException
             // file opened exclusively by this window : the memo file cannot be read directly -> use the RDD value below
             System.Diagnostics.Debug.WriteLine( ex:Message )
@@ -1251,35 +1149,12 @@ PUBLIC CLASS DataWindow INHERIT System.Windows.Forms.Form
     PRIVATE METHOD IsBinaryChar( nIdx AS INT ) AS LOGIC
         RETURN SELF:oTable:IsBinaryChar( nIdx )
 
-    /// <summary>Raw bytes of a field, read directly from the DBF record (IOException when this window holds the file exclusively)</summary>
-    PRIVATE METHOD ReadFieldBytes( nRec AS LONG, nIdx AS INT ) AS BYTE[]
-        SELF:Sel()
-        // position of the field inside the record (byte 0 = deleted flag)
-        LOCAL nOffset := 1 AS INT
-        FOR VAR i := 1 TO nIdx
-            nOffset += (INT) (LONG) SELF:oRdd:FieldInfo( i, DBS_LEN, NULL )
-        NEXT
-        LOCAL nLen := (INT) (LONG) SELF:oRdd:FieldInfo( nIdx + 1, DBS_LEN, NULL ) AS INT
-        LOCAL aData := BYTE[]{ nLen } AS BYTE[]
-        LOCAL fs := FileStream{ SELF:cFile, FileMode.Open, FileAccess.Read, FileShare.ReadWrite } AS FileStream
-        TRY
-            LOCAL aHeader := BYTE[]{ 12 } AS BYTE[]
-            fs:Read( aHeader, 0, 12 )
-            LOCAL nHdrLen := BitConverter.ToUInt16( aHeader, 8 ) AS INT
-            LOCAL nRecLen := BitConverter.ToUInt16( aHeader, 10 ) AS INT
-            fs:Seek( (INT64) nHdrLen + (INT64) ( nRec - 1 ) * nRecLen + nOffset, SeekOrigin.Begin )
-            fs:Read( aData, 0, nLen )
-        FINALLY
-            fs:Close()
-        END TRY
-        RETURN aData
-
     /// <summary>Shows the content of a binary character field (record nRec, field nIdx) in the hex viewer</summary>
     PRIVATE METHOD ShowBinaryChar( nRec AS LONG, nIdx AS INT ) AS VOID
         LOCAL aBytes := NULL AS BYTE[]
         TRY
             SELF:Commit()
-            aBytes := SELF:ReadFieldBytes( nRec, nIdx )
+            aBytes := SELF:oTable:ReadFieldBytes( nRec, nIdx )
         CATCH ex AS IOException
             // file held exclusively by this window : use the value delivered by the RDD below
             System.Diagnostics.Debug.WriteLine( ex:Message )
@@ -1326,19 +1201,7 @@ PUBLIC CLASS DataWindow INHERIT System.Windows.Forms.Form
         ENDIF
         TRY
             SELF:Commit()
-            LOCAL aHeader := BYTE[]{ 12 } AS BYTE[]
-            LOCAL aRecord := NULL AS BYTE[]
-            LOCAL fs := FileStream{ SELF:cFile, FileMode.Open, FileAccess.Read, FileShare.ReadWrite } AS FileStream
-            TRY
-                fs:Read( aHeader, 0, 12 )
-                LOCAL nHdrLen := BitConverter.ToUInt16( aHeader, 8 ) AS INT
-                LOCAL nLen  := BitConverter.ToUInt16( aHeader, 10 ) AS INT
-                aRecord := BYTE[]{ nLen }
-                fs:Seek( (INT64) nHdrLen + (INT64) ( nRec - 1 ) * nLen, SeekOrigin.Begin )
-                fs:Read( aRecord, 0, nLen )
-            FINALLY
-                fs:Close()
-            END TRY
+            LOCAL aRecord := SELF:oTable:ReadRecordBytes( nRec ) AS BYTE[]
             LOCAL oHex := HexaEditor{} AS HexaEditor
             oHex:Text := Path.GetFileName( SELF:cFile ) + "  -  Record " + Convert.ToString( nRec )
             oHex:SetBytes( aRecord )
@@ -1356,25 +1219,16 @@ PUBLIC CLASS DataWindow INHERIT System.Windows.Forms.Form
         LOCAL nHdrLen  := 0 AS INT
         LOCAL nLen   := 0 AS INT
         LOCAL cStatus := "" AS STRING
-        TRY
-            SELF:Sel()
-            LOCAL aHeader := BYTE[]{ 12 } AS BYTE[]
-            LOCAL fs := FileStream{ SELF:cFile, FileMode.Open, FileAccess.Read, FileShare.ReadWrite } AS FileStream
-            TRY
-                fs:Read( aHeader, 0, 12 )
-            FINALLY
-                fs:Close()
-            END TRY
+        LOCAL aHeader := SELF:oTable:ReadHeader() AS BYTE[]
+        IF aHeader != NULL
             nHdrLen  := BitConverter.ToUInt16( aHeader, 8 )
             nLen   := BitConverter.ToUInt16( aHeader, 10 )
             cStatus := String.Format( "{0:00}.{1:00}.{2:0000}", aHeader:GetValue( 3 ), aHeader:GetValue( 2 ), 1900 + Convert.ToInt32( aHeader:GetValue( 1 ) ) )
-        CATCH
-            NOP
-        END TRY
+        ENDIF
 
         oInfo:AppendLine( "File         : " + SELF:cFile )
         oInfo:AppendLine( "Driver       : " + SELF:cDriver + "   (" + SELF:Mode + ")" )
-        oInfo:AppendLine( "Records      : " + Convert.ToString( (LONG) LastRec() ) + "   (in view: " + Convert.ToString( SELF:aRecs:Count ) + ")" )
+        oInfo:AppendLine( "Records      : " + Convert.ToString( SELF:oTable:RecordCount() ) + "   (in view: " + Convert.ToString( SELF:aRecs:Count ) + ")" )
         oInfo:AppendLine( "Record length: " + Convert.ToString( nLen ) + "   Header: " + Convert.ToString( nHdrLen ) + "   last change: " + cStatus )
         oInfo:AppendLine( "DBF size     : " + SELF:FormatSize( SELF:cFile ) )
         FOREACH cExt AS STRING IN <STRING>{ ".fpt", ".dbt", ".cdx", ".ntx" }
@@ -1385,19 +1239,8 @@ PUBLIC CLASS DataWindow INHERIT System.Windows.Forms.Form
         NEXT
         oInfo:AppendLine( "" )
         oInfo:AppendLine( "Indexes:" )
-        FOR VAR i := 1 TO 200
-            LOCAL cName := "" AS STRING
-            LOCAL cKey  := "" AS STRING
-            TRY
-                cName := ((STRING) OrdName( i )):Trim()
-                cKey  := ((STRING) OrdKey( i )):Trim()
-            CATCH
-                NOP
-            END TRY
-            IF cName:Length == 0
-                EXIT
-            ENDIF
-            oInfo:AppendLine( "  " + cName:PadRight( 12 ) + cKey )
+        FOREACH aOrd AS STRING[] IN SELF:oTable:GetOrders()
+            oInfo:AppendLine( "  " + ((STRING) aOrd:GetValue( 0 )):PadRight( 12 ) + (STRING) aOrd:GetValue( 1 ) )
         NEXT
 
         // Window with info on top and field list below
@@ -1430,7 +1273,7 @@ PUBLIC CLASS DataWindow INHERIT System.Windows.Forms.Form
         lv:Columns:Add( "Offset", 60, HorizontalAlignment.Right )
         LOCAL nOffset := 1 AS INT
         FOR VAR i := 1 TO SELF:nFields
-            LOCAL nFieldLen := (INT) (LONG) SELF:oRdd:FieldInfo( i, DBS_LEN, NULL ) AS INT
+            LOCAL nFieldLen := SELF:oTable:FieldLength[i - 1] AS INT
             LOCAL oItem := ListViewItem{ Convert.ToString( i ) } AS ListViewItem
             oItem:SubItems:Add( SELF:aFieldName[i - 1] )
             oItem:SubItems:Add( SELF:aFieldType[i - 1] )
@@ -1631,7 +1474,7 @@ PUBLIC CLASS DataWindow INHERIT System.Windows.Forms.Form
         SELF:pnlFormView:SuspendLayout()
         FOR VAR i := 1 TO SELF:nFields
             LOCAL cType := SELF:aFieldType[i - 1] AS STRING
-            LOCAL nLen := (INT) (LONG) SELF:oRdd:FieldInfo( i, DBS_LEN, NULL ) AS INT
+            LOCAL nLen := SELF:oTable:FieldLength[i - 1] AS INT
             LOCAL lbl := Label{} AS Label
             lbl:Text      := SELF:aFieldName[i - 1]
             lbl:Location  := Point{ 10, nY + 3 }
@@ -1776,12 +1619,12 @@ PUBLIC CLASS DataWindow INHERIT System.Windows.Forms.Form
         TRY
             SELF:Sel()
             IF dlg:IsExpression
-                oCb := MCompile( dlg:InputValue )
+                oCb := SELF:oTable:Compile( dlg:InputValue )
             ELSE
                 oFixed := DbfTable.ConvertText( dlg:InputValue, IIF( cType == "M", "C", cType ) )
             ENDIF
             IF dlg:Condition:Length > 0
-                oFor := MCompile( dlg:Condition )
+                oFor := SELF:oTable:Compile( dlg:Condition )
             ENDIF
         CATCH ex AS Exception
             MessageBox.Show( "Invalid value or expression: " + ex:Message, "DBReplace", MessageBoxButtons.OK, MessageBoxIcon.Warning )
@@ -1799,44 +1642,21 @@ PUBLIC CLASS DataWindow INHERIT System.Windows.Forms.Form
                 RETURN
             ENDIF
         ENDIF
-        LOCAL nNum := 0, nLocked := 0, nError := 0 AS INT
-        LOCAL cError := "" AS STRING
+        LOCAL oResult := DbfResult{} AS DbfResult
         SELF:Cursor := Cursors.WaitCursor
         TRY
-            SELF:Sel()
-            FOREACH nRec AS LONG IN aTarget
-                DbGoto( nRec )
-                IF oFor != NULL
-                    LOCAL lMatches := FALSE AS LOGIC
-                    TRY
-                        lMatches := (LOGIC) Eval( oFor )
-                    CATCH
-                        lMatches := FALSE
-                    END TRY
-                    IF ! lMatches
-                        LOOP
-                    ENDIF
-                ENDIF
-                IF ! SELF:lExclusive .AND. ! DbRLock( nRec )
-                    nLocked++
-                    LOOP
-                ENDIF
-                TRY
-                    LOCAL oNew := IIF( oCb != NULL, (OBJECT) Eval( oCb ), oFixed ) AS OBJECT
-                    FieldPut( nIdx + 1, oNew )
-                    nNum++
-                CATCH ex AS Exception
-                    nError++
-                    cError := ex:Message
-                END TRY
-            NEXT
-            DbCommit()
-            IF ! SELF:lExclusive
-                DbUnlock()
-            ENDIF
+            oResult := SELF:oTable:ReplaceField( nIdx, oCb, oFixed, oFor, aTarget )
         FINALLY
             SELF:Cursor := Cursors.Default
         END TRY
+        LOCAL nNum := oResult:Done AS INT
+        LOCAL nLocked := oResult:Locked AS INT
+        LOCAL nError := oResult:Errors AS INT
+        LOCAL cError := oResult:LastError AS STRING
+        IF oResult:Failed
+            nError++
+            cError := oResult:Error
+        ENDIF
         SELF:RefreshView()
         MessageBox.Show( Convert.ToString( nNum ) + " records replaced." + ;
             IIF( nLocked > 0, Environment.NewLine + Convert.ToString( nLocked ) + " records locked (not changed).", "" ) + ;
@@ -1846,74 +1666,11 @@ PUBLIC CLASS DataWindow INHERIT System.Windows.Forms.Form
     // =====================================================================
     // JSON export
     // =====================================================================
-    /// <summary>Value for the JSON writer: RDD wrapper types become plain .NET values, an empty date becomes null</summary>
-    PRIVATE STATIC METHOD JsonValue( oValue AS OBJECT ) AS OBJECT
-        IF oValue == NULL .OR. oValue IS System.DBNull
-            RETURN NULL
-        ENDIF
-        IF oValue IS IDate
-            LOCAL oDate := (IDate) oValue AS IDate
-            IF oDate:IsEmpty
-                RETURN NULL
-            ENDIF
-            RETURN DateTime{ oDate:Year, oDate:Month, oDate:Day }
-        ENDIF
-        IF oValue IS DateTime .AND. (DateTime) oValue == DateTime.MinValue
-            RETURN NULL
-        ENDIF
-        IF oValue IS DbFloat
-            RETURN ((DbFloat) oValue):Value
-        ENDIF
-        RETURN oValue
-
-    /// <summary>Writes the records to a JSON file (Newtonsoft.Json): an array with one object per record
-    /// ("Deleted", "RecNo", then the fields). lAll = all records of the file in natural order,
-    /// otherwise the records of the current view (order, filter, scope). Returns the number of records written.</summary>
+    /// <summary>Writes the records to a JSON file (see DbfTable.WriteJson). lAll = all records of the file in natural
+    /// order, otherwise the records of the current view (order, filter, scope). Returns the number of records written.</summary>
     PUBLIC METHOD WriteJson( cFileName AS STRING, lAll AS LOGIC ) AS INT
-        LOCAL nCount := 0 AS INT
-        LOCAL aExport := List<LONG>{} AS List<LONG>
-        // a field may be called DELETED or RECNO : keep the meta keys apart
-        LOCAL cKeyDeleted := IIF( SELF:aFieldName:Contains( "DELETED" ), "_Deleted", "Deleted" ) AS STRING
-        LOCAL cKeyRecno   := IIF( SELF:aFieldName:Contains( "RECNO" ), "_RecNo", "RecNo" ) AS STRING
-        SELF:Sel()
-        IF lAll
-            FOR VAR nRec := 1 TO (LONG) LastRec()
-                aExport:Add( nRec )
-            NEXT
-        ELSE
-            aExport:AddRange( SELF:aRecs )
-        ENDIF
-        LOCAL w := StreamWriter{ cFileName, FALSE, System.Text.UTF8Encoding{ FALSE } } AS StreamWriter
-        TRY
-            LOCAL jw := Newtonsoft.Json.JsonTextWriter{ w } AS Newtonsoft.Json.JsonTextWriter
-            jw:Formatting := Newtonsoft.Json.Formatting.Indented
-            jw:WriteStartArray()
-            FOR VAR i := 0 TO aExport:Count - 1
-                DbGoto( aExport[i] )
-                jw:WriteStartObject()
-                jw:WritePropertyName( cKeyDeleted )
-                jw:WriteValue( IIF( Deleted(), "*", " " ) )
-                jw:WritePropertyName( cKeyRecno )
-                jw:WriteValue( (LONG) RecNo() )
-                FOR VAR f := 1 TO SELF:nFields
-                    LOCAL oValue := NULL AS OBJECT
-                    TRY
-                        oValue := SELF:oRdd:GetValue( f )
-                    CATCH
-                        oValue := NULL
-                    END TRY
-                    jw:WritePropertyName( SELF:aFieldName[f - 1] )
-                    jw:WriteValue( JsonValue( oValue ) )
-                NEXT
-                jw:WriteEndObject()
-                nCount++
-            NEXT
-            jw:WriteEndArray()
-            jw:Flush()
-        FINALLY
-            w:Close()
-        END TRY
-        RETURN nCount
+        RETURN SELF:oTable:WriteJson( cFileName, lAll )
+
     /// <summary>Utils - Export JSON: asks for the file (and, for a restricted view, for the record set)</summary>
     PUBLIC METHOD ExportJson() AS VOID
         LOCAL lAll := FALSE AS LOGIC
@@ -1921,7 +1678,7 @@ PUBLIC CLASS DataWindow INHERIT System.Windows.Forms.Form
             SELF:Sel()
             LOCAL answer := MessageBox.Show( "The current view is restricted (filter, scope or hidden deleted records)." + Environment.NewLine + Environment.NewLine + ;
                 "Yes = export the " + Convert.ToString( SELF:aRecs:Count ) + " records of the current view" + Environment.NewLine + ;
-                "No = export all " + Convert.ToString( (LONG) LastRec() ) + " records of the file", ;
+                "No = export all " + Convert.ToString( SELF:oTable:RecordCount() ) + " records of the file", ;
                 "Export JSON", MessageBoxButtons.YesNoCancel, MessageBoxIcon.Question ) AS DialogResult
             IF answer == DialogResult.Cancel
                 RETURN

@@ -1,4 +1,4 @@
-USING System
+﻿USING System
 USING System.IO
 USING System.Globalization
 USING System.Collections.Generic
@@ -23,6 +23,9 @@ PUBLIC CLASS DbfResult
     PUBLIC Invalid := FALSE AS LOGIC
     /// <summary>Record number the operation ended on (new record, restored record ...), 0 = none</summary>
     PUBLIC Rec    := 0 AS LONG
+    /// <summary>Records that raised an error (replace); LastError holds the text of the last one</summary>
+    PUBLIC Errors := 0 AS INT
+    PUBLIC LastError := "" AS STRING
     /// <summary>Field names that could not be taken over (paste)</summary>
     PUBLIC BadFields := List<STRING>{} AS List<STRING>
     PUBLIC PROPERTY Failed AS LOGIC GET SELF:Error:Length > 0
@@ -41,6 +44,7 @@ PUBLIC CLASS DbfTable
     PRIVATE aDec    := List<INT>{}    AS List<INT>
     PRIVATE aAuto   := List<LOGIC>{}  AS List<LOGIC>       // AutoIncrement and system fields: written by the RDD itself
     PRIVATE aBinary := List<LOGIC>{}  AS List<LOGIC>       // binary fields (flag 4)
+    PRIVATE aLen    := List<INT>{}    AS List<INT>         // field lengths in bytes
 
     PUBLIC PROPERTY Rdd       AS IRdd   GET SELF:oRdd
     PUBLIC PROPERTY Area      AS DWORD  GET SELF:nArea
@@ -56,6 +60,7 @@ PUBLIC CLASS DbfTable
     PUBLIC PROPERTY FieldDec    AS List<INT>    GET SELF:aDec
     PUBLIC PROPERTY FieldAuto   AS List<LOGIC>  GET SELF:aAuto
     PUBLIC PROPERTY FieldBinary AS List<LOGIC>  GET SELF:aBinary
+    PUBLIC PROPERTY FieldLength AS List<INT>    GET SELF:aLen
 
     // --- View ---
     /// <summary>Record numbers in display order (active order, deleted flag, scope, filter)</summary>
@@ -131,6 +136,7 @@ PUBLIC CLASS DbfTable
         SELF:aDec:Clear()
         SELF:aAuto:Clear()
         SELF:aBinary:Clear()
+        SELF:aLen:Clear()
         FOR VAR i := 1 TO SELF:oRdd:FieldCount
             SELF:aName:Add( SELF:oRdd:FieldName( i ):ToUpper() )
             SELF:aType:Add( ((STRING) SELF:oRdd:FieldInfo( i, DBS_TYPE, NULL )):ToUpper():Substring( 0, 1 ) )
@@ -143,6 +149,7 @@ PUBLIC CLASS DbfTable
             END TRY
             SELF:aAuto:Add( ( nFlags & 9 ) != 0 )          // 1 = System, 8 = AutoIncrement
             SELF:aBinary:Add( ( nFlags & 4 ) != 0 )        // 4 = Binary
+            SELF:aLen:Add( (INT) (LONG) SELF:oRdd:FieldInfo( i, DBS_LEN, NULL ) )
         NEXT
         RETURN
 
@@ -344,6 +351,296 @@ PUBLIC CLASS DbfTable
             RETURN Math.Sign( DateTime.Compare( dKey, (DateTime) oLimit ) )
         ENDIF
         RETURN Math.Sign( Convert.ToDouble( oKey ):CompareTo( Convert.ToDouble( oLimit ) ) )
+
+    // =====================================================================
+    // Reading records
+    // =====================================================================
+    /// <summary>Memo text for a list: first 200 characters, line breaks as spaces</summary>
+    PUBLIC STATIC METHOD MemoPreview( oValue AS OBJECT ) AS STRING
+        IF oValue == NULL
+            RETURN ""
+        ENDIF
+        LOCAL cMemo := oValue:ToString() AS STRING
+        IF cMemo:Length > 400
+            cMemo := cMemo:Substring( 0, 400 )
+        ENDIF
+        cMemo := cMemo:Replace( e"\r\n", " " ):Replace( e"\n", " " ):Replace( e"\r", " " ):TrimEnd( <CHAR>{ c' ', (CHAR) 0 } )
+        RETURN IIF( cMemo:Length > 200, cMemo:Substring( 0, 200 ) + "...", cMemo )
+
+    /// <summary>The values of record nRec in field order. lMemos = FALSE: memo fields come back as a short preview
+    /// (the FPT is not read for display). The record is read again (up to 3 times) when another read moved the
+    /// record pointer in between.</summary>
+    PUBLIC METHOD ReadRow( nRec AS LONG, lMemos AS LOGIC, lDeleted REF LOGIC ) AS List<OBJECT>
+        LOCAL aValues := List<OBJECT>{} AS List<OBJECT>
+        lDeleted := FALSE
+        FOR VAR nAttempt := 1 TO 3
+            SELF:Sel()
+            DbGoto( nRec )
+            aValues:Clear()
+            FOR VAR i := 1 TO SELF:aName:Count
+                LOCAL oVal := NULL AS OBJECT
+                TRY
+                    IF ! lMemos .AND. SELF:aType[i - 1] == "M"
+                        oVal := DbfTable.MemoPreview( SELF:oRdd:GetValue( i ) )
+                    ELSE
+                        oVal := SELF:oRdd:GetValue( i )
+                    ENDIF
+                CATCH
+                    oVal := "<Error>"
+                END TRY
+                aValues:Add( oVal )
+            NEXT
+            lDeleted := Deleted()
+            IF (LONG) RecNo() == nRec
+                EXIT
+            ENDIF
+        NEXT
+        RETURN aValues
+
+    /// <summary>First 12 bytes of the DBF header (read from disk), NULL when the file cannot be read</summary>
+    PUBLIC METHOD ReadHeader() AS BYTE[]
+        TRY
+            LOCAL aHeader := BYTE[]{ 12 } AS BYTE[]
+            LOCAL fs := FileStream{ SELF:FileName, FileMode.Open, FileAccess.Read, FileShare.ReadWrite } AS FileStream
+            TRY
+                fs:Read( aHeader, 0, 12 )
+            FINALLY
+                fs:Close()
+            END TRY
+            RETURN aHeader
+        CATCH
+            RETURN NULL
+        END TRY
+
+    /// <summary>Offset of field nIdx (0-based) inside the record; byte 0 is the deleted flag</summary>
+    PUBLIC METHOD FieldOffset( nIdx AS INT ) AS INT
+        LOCAL nOffset := 1 AS INT
+        FOR VAR i := 0 TO nIdx - 1
+            nOffset += SELF:aLen[i]
+        NEXT
+        RETURN nOffset
+
+    /// <summary>Raw bytes of a whole record (with deleted flag), read directly from the DBF file.
+    /// IOException when this process holds the file exclusively.</summary>
+    PUBLIC METHOD ReadRecordBytes( nRec AS LONG ) AS BYTE[]
+        LOCAL aHeader := BYTE[]{ 12 } AS BYTE[]
+        LOCAL aRecord := NULL AS BYTE[]
+        LOCAL fs := FileStream{ SELF:FileName, FileMode.Open, FileAccess.Read, FileShare.ReadWrite } AS FileStream
+        TRY
+            fs:Read( aHeader, 0, 12 )
+            LOCAL nHdrLen := BitConverter.ToUInt16( aHeader, 8 ) AS INT
+            LOCAL nLen    := BitConverter.ToUInt16( aHeader, 10 ) AS INT
+            aRecord := BYTE[]{ nLen }
+            fs:Seek( (INT64) nHdrLen + (INT64) ( nRec - 1 ) * nLen, SeekOrigin.Begin )
+            fs:Read( aRecord, 0, nLen )
+        FINALLY
+            fs:Close()
+        END TRY
+        RETURN aRecord
+
+    /// <summary>Raw bytes of a field (0-based index), read directly from the DBF record (IOException when this
+    /// process holds the file exclusively)</summary>
+    PUBLIC METHOD ReadFieldBytes( nRec AS LONG, nIdx AS INT ) AS BYTE[]
+        LOCAL nOffset := SELF:FieldOffset( nIdx ) AS INT
+        LOCAL nLen    := SELF:aLen[nIdx] AS INT
+        LOCAL aData   := BYTE[]{ nLen } AS BYTE[]
+        LOCAL fs := FileStream{ SELF:FileName, FileMode.Open, FileAccess.Read, FileShare.ReadWrite } AS FileStream
+        TRY
+            LOCAL aHeader := BYTE[]{ 12 } AS BYTE[]
+            fs:Read( aHeader, 0, 12 )
+            LOCAL nHdrLen := BitConverter.ToUInt16( aHeader, 8 ) AS INT
+            LOCAL nRecLen := BitConverter.ToUInt16( aHeader, 10 ) AS INT
+            fs:Seek( (INT64) nHdrLen + (INT64) ( nRec - 1 ) * nRecLen + nOffset, SeekOrigin.Begin )
+            fs:Read( aData, 0, nLen )
+        FINALLY
+            fs:Close()
+        END TRY
+        RETURN aData
+
+    /// <summary>Raw content of a memo block, read directly from the FPT file (FoxPro / VFP memo files).
+    /// Returns NULL when it cannot be read this way (no FPT file, DBT memo, block outside the file ...).</summary>
+    PUBLIC METHOD ReadMemoBytes( nRec AS LONG, nIdx AS INT ) AS BYTE[]
+        LOCAL cFpt := Path.ChangeExtension( SELF:FileName, ".fpt" ) AS STRING
+        IF ! File.Exists( cFpt )
+            RETURN NULL
+        ENDIF
+        LOCAL nOffset  := SELF:FieldOffset( nIdx ) AS INT
+        LOCAL nPtrLen  := SELF:aLen[nIdx] AS INT
+        LOCAL nBlockNo := 0 AS INT64
+        LOCAL fs := FileStream{ SELF:FileName, FileMode.Open, FileAccess.Read, FileShare.ReadWrite } AS FileStream
+        TRY
+            LOCAL aHeader := BYTE[]{ 12 } AS BYTE[]
+            fs:Read( aHeader, 0, 12 )
+            LOCAL nHdrLen := BitConverter.ToUInt16( aHeader, 8 ) AS INT
+            LOCAL nRecLen := BitConverter.ToUInt16( aHeader, 10 ) AS INT
+            LOCAL aPtr := BYTE[]{ nPtrLen } AS BYTE[]
+            fs:Seek( (INT64) nHdrLen + (INT64) ( nRec - 1 ) * nRecLen + nOffset, SeekOrigin.Begin )
+            fs:Read( aPtr, 0, nPtrLen )
+            IF nPtrLen == 4
+                nBlockNo := BitConverter.ToUInt32( aPtr, 0 )                 // VFP : 4 byte binary, little endian
+            ELSE
+                // FoxPro 2.x : 10 digits as text
+                IF ! Int64.TryParse( System.Text.Encoding.ASCII.GetString( aPtr ):Trim(), OUT nBlockNo )
+                    nBlockNo := 0
+                ENDIF
+            ENDIF
+        FINALLY
+            fs:Close()
+        END TRY
+        IF nBlockNo == 0
+            RETURN BYTE[]{ 0 }                                              // empty memo
+        ENDIF
+        LOCAL ft := FileStream{ cFpt, FileMode.Open, FileAccess.Read, FileShare.ReadWrite } AS FileStream
+        TRY
+            LOCAL aHead := BYTE[]{ 8 } AS BYTE[]
+            ft:Read( aHead, 0, 8 )
+            LOCAL aTwo := BYTE[]{ 2 } AS BYTE[]
+            Array.Copy( aHead, 6, aTwo, 0, 2 )
+            Array.Reverse( aTwo )                                           // block size : big endian
+            LOCAL nBlockSize := (INT64) BitConverter.ToUInt16( aTwo, 0 ) AS INT64
+            IF nBlockSize <= 0 .OR. nBlockNo * nBlockSize + 8 > ft:Length
+                RETURN NULL
+            ENDIF
+            ft:Seek( nBlockNo * nBlockSize, SeekOrigin.Begin )
+            LOCAL aBlock := BYTE[]{ 8 } AS BYTE[]                           // block header : type (4) + length (4), both big endian
+            ft:Read( aBlock, 0, 8 )
+            LOCAL aFour := BYTE[]{ 4 } AS BYTE[]
+            Array.Copy( aBlock, 4, aFour, 0, 4 )
+            Array.Reverse( aFour )
+            LOCAL nDataLen := (INT64) BitConverter.ToUInt32( aFour, 0 ) AS INT64
+            IF nDataLen < 0 .OR. nDataLen > 268435456 .OR. ft:Position + nDataLen > ft:Length
+                RETURN NULL
+            ENDIF
+            LOCAL aData := BYTE[]{ (INT) nDataLen } AS BYTE[]
+            IF nDataLen > 0
+                ft:Read( aData, 0, (INT) nDataLen )
+            ENDIF
+            RETURN aData
+        FINALLY
+            ft:Close()
+        END TRY
+
+    // =====================================================================
+    // Replace
+    // =====================================================================
+    /// <summary>Compile a macro expression in the context of this work area</summary>
+    PUBLIC METHOD Compile( cExpression AS STRING ) AS OBJECT
+        SELF:Sel()
+        RETURN MCompile( cExpression )
+
+    /// <summary>Assign a value to field nIdx (0-based) in the given records. The value is either oFixed or the
+    /// result of the compiled expression oCb; oFor (optional) decides per record. Done = records changed,
+    /// Locked = skipped (locked), Errors / LastError = records that raised an error.</summary>
+    PUBLIC METHOD ReplaceField( nIdx AS INT, oCb AS OBJECT, oFixed AS OBJECT, oFor AS OBJECT, aTarget AS List<LONG> ) AS DbfResult
+        LOCAL oResult := DbfResult{} AS DbfResult
+        TRY
+            SELF:Sel()
+            FOREACH nRec AS LONG IN aTarget
+                DbGoto( nRec )
+                IF oFor != NULL
+                    LOCAL lMatches := FALSE AS LOGIC
+                    TRY
+                        lMatches := (LOGIC) Eval( oFor )
+                    CATCH
+                        lMatches := FALSE
+                    END TRY
+                    IF ! lMatches
+                        LOOP
+                    ENDIF
+                ENDIF
+                IF ! SELF:Exclusive .AND. ! DbRLock( nRec )
+                    oResult:Locked++
+                    LOOP
+                ENDIF
+                TRY
+                    LOCAL oNew := IIF( oCb != NULL, (OBJECT) Eval( oCb ), oFixed ) AS OBJECT
+                    FieldPut( nIdx + 1, oNew )
+                    oResult:Done++
+                CATCH ex AS Exception
+                    oResult:Errors++
+                    oResult:LastError := ex:Message
+                END TRY
+            NEXT
+            DbCommit()
+            IF ! SELF:Exclusive
+                DbUnlock()
+            ENDIF
+        CATCH ex AS Exception
+            oResult:Error := ex:Message
+        END TRY
+        RETURN oResult
+
+    // =====================================================================
+    // JSON export
+    // =====================================================================
+    /// <summary>Value for the JSON writer: RDD wrapper types become plain .NET values, an empty date becomes null</summary>
+    PUBLIC STATIC METHOD JsonValue( oValue AS OBJECT ) AS OBJECT
+        IF oValue == NULL .OR. oValue IS System.DBNull
+            RETURN NULL
+        ENDIF
+        IF oValue IS IDate
+            LOCAL oDate := (IDate) oValue AS IDate
+            IF oDate:IsEmpty
+                RETURN NULL
+            ENDIF
+            RETURN DateTime{ oDate:Year, oDate:Month, oDate:Day }
+        ENDIF
+        IF oValue IS DateTime .AND. (DateTime) oValue == DateTime.MinValue
+            RETURN NULL
+        ENDIF
+        IF oValue IS DbFloat
+            RETURN ((DbFloat) oValue):Value
+        ENDIF
+        RETURN oValue
+
+    /// <summary>Writes the records to a JSON file (Newtonsoft.Json): an array with one object per record
+    /// ("Deleted", "RecNo", then the fields). lAll = all records of the file in natural order, otherwise the
+    /// records of the current view (order, filter, scope). Returns the number of records written.</summary>
+    PUBLIC METHOD WriteJson( cFileName AS STRING, lAll AS LOGIC ) AS INT
+        LOCAL nCount  := 0 AS INT
+        LOCAL aExport := List<LONG>{} AS List<LONG>
+        // a field may be called DELETED or RECNO : keep the meta keys apart
+        LOCAL cKeyDeleted := IIF( SELF:aName:Contains( "DELETED" ), "_Deleted", "Deleted" ) AS STRING
+        LOCAL cKeyRecno   := IIF( SELF:aName:Contains( "RECNO" ), "_RecNo", "RecNo" ) AS STRING
+        SELF:Sel()
+        IF lAll
+            FOR VAR nRec := 1 TO (LONG) LastRec()
+                aExport:Add( nRec )
+            NEXT
+        ELSE
+            aExport:AddRange( SELF:Recs )
+        ENDIF
+        LOCAL w := StreamWriter{ cFileName, FALSE, System.Text.UTF8Encoding{ FALSE } } AS StreamWriter
+        TRY
+            LOCAL jw := Newtonsoft.Json.JsonTextWriter{ w } AS Newtonsoft.Json.JsonTextWriter
+            jw:Formatting := Newtonsoft.Json.Formatting.Indented
+            jw:WriteStartArray()
+            FOR VAR i := 0 TO aExport:Count - 1
+                DbGoto( aExport[i] )
+                jw:WriteStartObject()
+                jw:WritePropertyName( cKeyDeleted )
+                jw:WriteValue( IIF( Deleted(), "*", " " ) )
+                jw:WritePropertyName( cKeyRecno )
+                jw:WriteValue( (LONG) RecNo() )
+                FOR VAR f := 1 TO SELF:aName:Count
+                    LOCAL oValue := NULL AS OBJECT
+                    TRY
+                        oValue := SELF:oRdd:GetValue( f )
+                    CATCH
+                        oValue := NULL
+                    END TRY
+                    jw:WritePropertyName( SELF:aName[f - 1] )
+                    jw:WriteValue( DbfTable.JsonValue( oValue ) )
+                NEXT
+                jw:WriteEndObject()
+                nCount++
+            NEXT
+            jw:WriteEndArray()
+            jw:Flush()
+        FINALLY
+            w:Close()
+        END TRY
+        RETURN nCount
 
     // =====================================================================
     // Delete / recall

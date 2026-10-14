@@ -5,6 +5,9 @@ USING XSharp
 USING XSharp.RDD
 USING XSharp.RDD.Support
 
+// The XSharp RDD layer keeps process-wide state (order conditions, defaults ...): never run tests in parallel
+[assembly: Xunit.CollectionBehavior( DisableTestParallelization := TRUE )]
+
 BEGIN NAMESPACE FabDBFEdEnh.Tests
 
 /// <summary>Creates throw-away tables in a temp folder; the folder is deleted again by Dispose</summary>

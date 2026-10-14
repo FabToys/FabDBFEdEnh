@@ -466,6 +466,137 @@ PUBLIC CLASS DbfTableTests
         END TRY
         RETURN
 
+    // ------------------------------------------------------------------
+    // Slice 4: reading rows and raw bytes, replace, JSON
+    // ------------------------------------------------------------------
+    [Fact];
+    PUBLIC METHOD ReadRow_ReturnsValuesInFieldOrderWithDeletedFlag() AS VOID
+        VAR oData := TestData{}
+        TRY
+            VAR oTable := OpenTable( CreateFive( oData ), TRUE )
+            oTable:SetDeleted( 2, TRUE )
+            LOCAL lDel := TRUE AS LOGIC
+            VAR aRow := oTable:ReadRow( 1, TRUE, REF lDel )
+            Assert.False( lDel )
+            Assert.Equal( 2, aRow:Count )
+            Assert.Equal( "A", Convert.ToString( aRow[0] ):Trim() )
+            Assert.Equal( 1.0, Convert.ToDouble( aRow[1] ) )
+            oTable:ReadRow( 2, TRUE, REF lDel )
+            Assert.True( lDel )
+            oTable:Close()
+        FINALLY
+            oData:Dispose()
+        END TRY
+        RETURN
+
+    [Fact];
+    PUBLIC METHOD MemoPreview_CutsLongTextAndFlattensLineBreaks() AS VOID
+        Assert.Equal( "", DbfTable.MemoPreview( NULL ) )
+        Assert.Equal( "one two three", DbfTable.MemoPreview( "one" + Environment.NewLine + "two" + Environment.NewLine + "three" ) )
+        VAR cLong := String{ (CHAR) 120, 300 }
+        VAR cPreview := DbfTable.MemoPreview( cLong )
+        Assert.Equal( 203, cPreview:Length )
+        Assert.EndsWith( "...", cPreview )
+
+    [Fact];
+    PUBLIC METHOD RawReaders_ReturnHeaderRecordAndFieldBytes() AS VOID
+        VAR oData := TestData{}
+        TRY
+            VAR oTable := OpenTable( CreateFive( oData ), FALSE )       // shared: the file can be read directly
+            oTable:Commit()
+            Assert.Equal( 1, oTable:FieldOffset( 0 ) )
+            Assert.Equal( 11, oTable:FieldOffset( 1 ) )
+            Assert.Equal( 10, oTable:FieldLength[0] )
+            VAR aHeader := oTable:ReadHeader()
+            Assert.NotNull( aHeader )
+            Assert.Equal( 12, aHeader:Length )
+            VAR aRecord := oTable:ReadRecordBytes( 3 )
+            Assert.Equal( 16, aRecord:Length )                         // 1 flag + 10 + 5
+            Assert.Equal( (BYTE) 32, aRecord[1] )                      // not deleted: blank
+            VAR aName := oTable:ReadFieldBytes( 3, 0 )
+            Assert.Equal( "C         ", System.Text.Encoding.ASCII:GetString( aName ) )
+            oTable:Close()
+        FINALLY
+            oData:Dispose()
+        END TRY
+        RETURN
+
+    [Fact];
+    PUBLIC METHOD ReadMemoBytes_ReadsTheBlockFromTheFptFile() AS VOID
+        VAR oData := TestData{}
+        TRY
+            LOCAL aFields := <RddFieldInfo>{ TestData.Field( "NAME", "C", 10, 0 ), TestData.Field( "NOTE", "M", 10, 0 ) } AS RddFieldInfo[]
+            LOCAL cFile := oData:CreateTable( "memo2", aFields ) AS STRING
+            oData:Append( cFile, <OBJECT>{ "ONE", "hello memo" } )
+            oData:Append( cFile, <OBJECT>{ "TWO", "" } )
+            VAR oTable := OpenTable( cFile, FALSE )
+            oTable:Commit()
+            VAR aBytes := oTable:ReadMemoBytes( 1, 1 )
+            Assert.NotNull( aBytes )
+            Assert.Equal( "hello memo", System.Text.Encoding.ASCII:GetString( aBytes ) )
+            // empty memo: an empty array (the window then says "The memo is empty")
+            Assert.Equal( 0, oTable:ReadMemoBytes( 2, 1 ):Length )
+            oTable:Close()
+        FINALLY
+            oData:Dispose()
+        END TRY
+        RETURN
+
+    [Fact];
+    PUBLIC METHOD ReplaceField_AssignsValueToMatchingRecordsOnly() AS VOID
+        VAR oData := TestData{}
+        TRY
+            VAR oTable := OpenTable( CreateFive( oData ), TRUE )
+            oTable:LoadList()
+            VAR oFor := oTable:Compile( "QTY > 3" )
+            VAR oResult := oTable:ReplaceField( 1, NULL, 99.0, oFor, oTable:Recs )
+            Assert.Equal( 2, oResult:Done )
+            Assert.Equal( 0, oResult:Errors )
+            Assert.Equal( 1.0, Convert.ToDouble( oTable:ReadRecord( 1 )["QTY"] ) )
+            Assert.Equal( 99.0, Convert.ToDouble( oTable:ReadRecord( 4 )["QTY"] ) )
+            Assert.Equal( 99.0, Convert.ToDouble( oTable:ReadRecord( 5 )["QTY"] ) )
+            // computed value
+            VAR oExpr := oTable:Compile( "QTY * 2" )
+            VAR oAll := oTable:ReplaceField( 1, oExpr, NULL, NULL, oTable:Recs )
+            Assert.Equal( 5, oAll:Done )
+            Assert.Equal( 2.0, Convert.ToDouble( oTable:ReadRecord( 1 )["QTY"] ) )
+            oTable:Close()
+        FINALLY
+            oData:Dispose()
+        END TRY
+        RETURN
+
+    [Fact];
+    PUBLIC METHOD WriteJson_WritesViewOrWholeFile() AS VOID
+        VAR oData := TestData{}
+        TRY
+            VAR oTable := OpenTable( CreateFive( oData ), TRUE )
+            oTable:SetDeleted( 2, TRUE )
+            oTable:LoadList()                                            // view: 4 records (deleted hidden)
+            LOCAL cView := System.IO.Path.Combine( oData:Folder, "view.json" ) AS STRING
+            LOCAL cAll  := System.IO.Path.Combine( oData:Folder, "all.json" ) AS STRING
+            Assert.Equal( 4, oTable:WriteJson( cView, FALSE ) )
+            Assert.Equal( 5, oTable:WriteJson( cAll, TRUE ) )
+            LOCAL cText := System.IO.File.ReadAllText( cAll ) AS STRING
+            Assert.Contains( """RecNo"": 2", cText )
+            Assert.Contains( """Deleted"": ""*""", cText )
+            Assert.Contains( """NAME"": ""B         """, cText )          // character values keep their padding
+            Assert.DoesNotContain( """RecNo"": 2", System.IO.File.ReadAllText( cView ) )
+            oTable:Close()
+        FINALLY
+            oData:Dispose()
+        END TRY
+        RETURN
+
+    [Fact];
+    PUBLIC METHOD JsonValue_NormalisesEmptyDatesAndPassesOthersThrough() AS VOID
+        Assert.Null( DbfTable.JsonValue( NULL ) )
+        Assert.Null( DbfTable.JsonValue( System.DBNull.Value ) )
+        Assert.Null( DbfTable.JsonValue( DateTime.MinValue ) )
+        Assert.Equal( "x", DbfTable.JsonValue( "x" ) )
+        Assert.Equal( 5, DbfTable.JsonValue( 5 ) )
+        RETURN
+
     [Fact];
     PUBLIC METHOD WriteMemo_StoresTextAndAllowsUndo() AS VOID
         VAR oData := TestData{}
