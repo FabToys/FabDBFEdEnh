@@ -8,6 +8,7 @@ which keep their own licenses.
 | Newtonsoft.Json | 13.0.4 | MIT | `lib\Newtonsoft.Json.dll`, NuGet |
 | ICSharpCode.TextEditorEx (built on the SharpDevelop ICSharpCode.TextEditor) | 1.4.0 | LGPL-2.1-or-later | `lib\ICSharpCode.TextEditorEx.dll`, NuGet |
 | X# runtime (XSharp.Core, .Data, .Rdd, .RT, .MacroCompiler) | 2.x / 3.x | Apache License 2.0 | not included, referenced from the X# installation |
+| xUnit.net (xunit.core, .assert, .abstractions, .execution, VS test adapter) - tests only | 2.9.3 / 2.8.2 | Apache License 2.0 | `FabDBFEdEnh.Tests\lib\`, NuGet |
 
 ---
 
@@ -61,3 +62,16 @@ https://www.xsharp.eu/ - https://github.com/X-Sharp
 Licensed under the Apache License, Version 2.0 (https://www.apache.org/licenses/LICENSE-2.0).
 The X# runtime assemblies are not part of this repository; they are installed with the X# product and are
 referenced by the projects.
+
+---
+
+## xUnit.net
+
+https://xunit.net/ - https://github.com/xunit/xunit
+
+Copyright (c) .NET Foundation and Contributors. Licensed under the Apache License, Version 2.0
+(https://www.apache.org/licenses/LICENSE-2.0).
+
+Used only by the test project `FabDBFEdEnh.Tests`; it is not part of the FabDBFEdEnh application. The DLLs in
+`FabDBFEdEnh.Tests\lib\` are the unmodified NuGet packages, kept for the XIde project (Visual Studio restores them
+from NuGet).
