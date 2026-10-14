@@ -1,4 +1,4 @@
-[General]
+﻿[General]
 PROJECT = FabDBFEdEnh
 IDEVersion = 3.0.6
 OutputFolder = %ProjectPath%\Bin\
@@ -136,6 +136,10 @@ FileType = Code
 CopyToBin = 0
 File = %AppPath%\SettingsDialogs.prg
 FileGUID = A0F3C338-1D25-4FDD-9CC1-50D9EFC07778
+FileType = Code
+CopyToBin = 0
+File = %AppPath%\DbfTable.prg
+FileGUID = 104EBDC7-40EE-48DF-8E8D-68D49924F28C
 FileType = Code
 CopyToBin = 0
 [FabDBFEdEnh References]
