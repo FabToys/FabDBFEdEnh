@@ -247,12 +247,12 @@ PUBLIC CLASS MainForm INHERIT System.Windows.Forms.Form
         RETURN
 
     PRIVATE METHOD UpdateChecks() AS VOID
-        LOCAL oF := SELF:ActiveWindow() AS DataWindow
-        IF oF != NULL
-            SELF:mShowRecno:Checked := oF:ShowsRecno
-            SELF:mShowDeleted:Checked   := oF:ShowsDeleted
-            SELF:mOnlyDeleted:Checked    := oF:ShowsOnlyDeleted
-            SELF:mAutoCommit:Checked := oF:AutoCommit
+        LOCAL oDW := SELF:ActiveWindow() AS DataWindow
+        IF oDW != NULL
+            SELF:mShowRecno:Checked := oDW:ShowsRecno
+            SELF:mShowDeleted:Checked   := oDW:ShowsDeleted
+            SELF:mOnlyDeleted:Checked    := oDW:ShowsOnlyDeleted
+            SELF:mAutoCommit:Checked := oDW:AutoCommit
         ELSE
             SELF:mShowRecno:Checked := SELF:oSettings:ShowRecno
             SELF:mShowDeleted:Checked   := SELF:oSettings:ShowDeleted
@@ -362,18 +362,18 @@ PUBLIC CLASS MainForm INHERIT System.Windows.Forms.Form
         RETURN
 
     PRIVATE METHOD OpenDirect( cFile AS STRING, cDriver AS STRING, lExcl AS LOGIC, lReadOnly AS LOGIC, lRecno AS LOGIC, lDel AS LOGIC ) AS VOID
-        LOCAL oF := DataWindow{} AS DataWindow
-        IF oF:OpenFile( cFile, cDriver, lExcl, lReadOnly, lRecno, lDel, SELF:oSettings:AutoCommit, SELF:oSettings:FullPath )
-            oF:MdiParent := SELF
-            oF:SetFont( SELF:oSettings:GetFont() )
+        LOCAL oDW := DataWindow{} AS DataWindow
+        IF oDW:OpenFile( cFile, cDriver, lExcl, lReadOnly, lRecno, lDel, SELF:oSettings:AutoCommit, SELF:oSettings:FullPath )
+            oDW:MdiParent := SELF
+            oDW:SetFont( SELF:oSettings:GetFont() )
             IF SELF:oSettings:DataMaximized
-                oF:WindowState := FormWindowState.Maximized
+                oDW:WindowState := FormWindowState.Maximized
             ENDIF
-            oF:Show()
-            SELF:oSettings:RememberFile( cFile, oF:Mode, cDriver )
+            oDW:Show()
+            SELF:oSettings:RememberFile( cFile, oDW:Mode, cDriver )
             SELF:BuildDatabaseMenu()
         ELSE
-            oF:Dispose()
+            oDW:Dispose()
         ENDIF
         RETURN
 
@@ -414,19 +414,19 @@ PUBLIC CLASS MainForm INHERIT System.Windows.Forms.Form
         LOCAL lRecno    := SELF:oSettings:ShowRecno AS LOGIC
         LOCAL lDel      := SELF:oSettings:ShowDeleted AS LOGIC
         LOCAL lWasOpen := FALSE AS LOGIC
-        LOCAL oF := SELF:ActiveWindow() AS DataWindow
-        IF oF != NULL
-            IF ! oF:Exclusive .OR. oF:ReadOnly
+        LOCAL oDW := SELF:ActiveWindow() AS DataWindow
+        IF oDW != NULL
+            IF ! oDW:Exclusive .OR. oDW:ReadOnly
                 MessageBox.Show( "Modify Structure needs the file opened EXCLUSIVE and not read-only." + Environment.NewLine + ;
                     "Please close the window and reopen the file with 'Exclusive'.", "Modify Structure", MessageBoxButtons.OK, MessageBoxIcon.Information )
                 RETURN
             ENDIF
-            cFile    := oF:FileName
-            cDriver   := oF:Driver
-            lRecno    := oF:ShowsRecno
-            lDel      := oF:ShowsDeleted
+            cFile    := oDW:FileName
+            cDriver   := oDW:Driver
+            lRecno    := oDW:ShowsRecno
+            lDel      := oDW:ShowsDeleted
             lWasOpen := TRUE
-            oF:Close()                  // Close the workarea so the file can be rebuilt
+            oDW:Close()                  // Close the workarea so the file can be rebuilt
         ELSE
             LOCAL ofd := OpenFileDialog{} AS OpenFileDialog
             ofd:Title := "Modify DBF Structure"
@@ -478,9 +478,9 @@ PUBLIC CLASS MainForm INHERIT System.Windows.Forms.Form
 
     // View - Select Fields
     PRIVATE METHOD M_Fields( sender AS OBJECT, e AS EventArgs ) AS VOID
-        LOCAL oF := SELF:ActiveWindow() AS DataWindow
-        IF oF != NULL
-            oF:ChooseFields()
+        LOCAL oDW := SELF:ActiveWindow() AS DataWindow
+        IF oDW != NULL
+            oDW:ChooseFields()
         ENDIF
         RETURN
 
@@ -538,44 +538,44 @@ PUBLIC CLASS MainForm INHERIT System.Windows.Forms.Form
     // Menu actions for the active data window
     // =====================================================================
     PRIVATE METHOD M_OpenIndex( sender AS OBJECT, e AS EventArgs ) AS VOID
-        LOCAL oF := SELF:ActiveWindow() AS DataWindow
-        IF oF != NULL
-            oF:OpenIndexFile()
+        LOCAL oDW := SELF:ActiveWindow() AS DataWindow
+        IF oDW != NULL
+            oDW:OpenIndexFile()
         ENDIF
         RETURN
 
     PRIVATE METHOD M_CloseIndex( sender AS OBJECT, e AS EventArgs ) AS VOID
-        LOCAL oF := SELF:ActiveWindow() AS DataWindow
-        IF oF != NULL
-            oF:CloseIndexes()
+        LOCAL oDW := SELF:ActiveWindow() AS DataWindow
+        IF oDW != NULL
+            oDW:CloseIndexes()
         ENDIF
         RETURN
 
     PRIVATE METHOD M_Search( sender AS OBJECT, e AS EventArgs ) AS VOID
-        LOCAL oF := SELF:ActiveWindow() AS DataWindow
-        IF oF != NULL
-            oF:FocusSearch()
+        LOCAL oDW := SELF:ActiveWindow() AS DataWindow
+        IF oDW != NULL
+            oDW:FocusSearch()
         ENDIF
         RETURN
 
     PRIVATE METHOD M_Append( sender AS OBJECT, e AS EventArgs ) AS VOID
-        LOCAL oF := SELF:ActiveWindow() AS DataWindow
-        IF oF != NULL
-            oF:AppendRecord()
+        LOCAL oDW := SELF:ActiveWindow() AS DataWindow
+        IF oDW != NULL
+            oDW:AppendRecord()
         ENDIF
         RETURN
 
     PRIVATE METHOD M_Delete( sender AS OBJECT, e AS EventArgs ) AS VOID
-        LOCAL oF := SELF:ActiveWindow() AS DataWindow
-        IF oF != NULL
-            oF:DeleteRecord( TRUE )
+        LOCAL oDW := SELF:ActiveWindow() AS DataWindow
+        IF oDW != NULL
+            oDW:DeleteRecord( TRUE )
         ENDIF
         RETURN
 
     PRIVATE METHOD M_DeleteScoped( sender AS OBJECT, e AS EventArgs ) AS VOID
-        LOCAL oF := SELF:ActiveWindow() AS DataWindow
-        IF oF != NULL
-            oF:DeleteScoped()
+        LOCAL oDW := SELF:ActiveWindow() AS DataWindow
+        IF oDW != NULL
+            oDW:DeleteScoped()
         ENDIF
         RETURN
 
@@ -587,30 +587,30 @@ PUBLIC CLASS MainForm INHERIT System.Windows.Forms.Form
             ENDIF
             RETURN
         ENDIF
-        LOCAL oF := SELF:ActiveWindow() AS DataWindow
-        IF oF != NULL
-            oF:CutRecord( FALSE )
+        LOCAL oDW := SELF:ActiveWindow() AS DataWindow
+        IF oDW != NULL
+            oDW:CutRecord( FALSE )
         ENDIF
         RETURN
 
     PRIVATE METHOD M_CutAdd( sender AS OBJECT, e AS EventArgs ) AS VOID
-        LOCAL oF := SELF:ActiveWindow() AS DataWindow
-        IF oF != NULL
-            oF:CutRecord( TRUE )
+        LOCAL oDW := SELF:ActiveWindow() AS DataWindow
+        IF oDW != NULL
+            oDW:CutRecord( TRUE )
         ENDIF
         RETURN
 
     PRIVATE METHOD M_Recall( sender AS OBJECT, e AS EventArgs ) AS VOID
-        LOCAL oF := SELF:ActiveWindow() AS DataWindow
-        IF oF != NULL
-            oF:DeleteRecord( FALSE )
+        LOCAL oDW := SELF:ActiveWindow() AS DataWindow
+        IF oDW != NULL
+            oDW:DeleteRecord( FALSE )
         ENDIF
         RETURN
 
     PRIVATE METHOD M_RecallAll( sender AS OBJECT, e AS EventArgs ) AS VOID
-        LOCAL oF := SELF:ActiveWindow() AS DataWindow
-        IF oF != NULL
-            oF:RecallAll()
+        LOCAL oDW := SELF:ActiveWindow() AS DataWindow
+        IF oDW != NULL
+            oDW:RecallAll()
         ENDIF
         RETURN
 
@@ -622,23 +622,23 @@ PUBLIC CLASS MainForm INHERIT System.Windows.Forms.Form
             oTb:ScrollToCaret()
             RETURN
         ENDIF
-        LOCAL oF := SELF:ActiveWindow() AS DataWindow
-        IF oF != NULL
-            oF:NavTop()
+        LOCAL oDW := SELF:ActiveWindow() AS DataWindow
+        IF oDW != NULL
+            oDW:NavTop()
         ENDIF
         RETURN
 
     PRIVATE METHOD M_Prev( sender AS OBJECT, e AS EventArgs ) AS VOID
-        LOCAL oF := SELF:ActiveWindow() AS DataWindow
-        IF oF != NULL
-            oF:NavPrev()
+        LOCAL oDW := SELF:ActiveWindow() AS DataWindow
+        IF oDW != NULL
+            oDW:NavPrev()
         ENDIF
         RETURN
 
     PRIVATE METHOD M_Next( sender AS OBJECT, e AS EventArgs ) AS VOID
-        LOCAL oF := SELF:ActiveWindow() AS DataWindow
-        IF oF != NULL
-            oF:NavNext()
+        LOCAL oDW := SELF:ActiveWindow() AS DataWindow
+        IF oDW != NULL
+            oDW:NavNext()
         ENDIF
         RETURN
 
@@ -650,23 +650,23 @@ PUBLIC CLASS MainForm INHERIT System.Windows.Forms.Form
             oTb:ScrollToCaret()
             RETURN
         ENDIF
-        LOCAL oF := SELF:ActiveWindow() AS DataWindow
-        IF oF != NULL
-            oF:NavBottom()
+        LOCAL oDW := SELF:ActiveWindow() AS DataWindow
+        IF oDW != NULL
+            oDW:NavBottom()
         ENDIF
         RETURN
 
     PRIVATE METHOD M_Goto( sender AS OBJECT, e AS EventArgs ) AS VOID
-        LOCAL oF := SELF:ActiveWindow() AS DataWindow
-        IF oF != NULL
-            oF:FocusGoto()
+        LOCAL oDW := SELF:ActiveWindow() AS DataWindow
+        IF oDW != NULL
+            oDW:FocusGoto()
         ENDIF
         RETURN
 
     PRIVATE METHOD M_Refresh( sender AS OBJECT, e AS EventArgs ) AS VOID
-        LOCAL oF := SELF:ActiveWindow() AS DataWindow
-        IF oF != NULL
-            oF:RefreshView()
+        LOCAL oDW := SELF:ActiveWindow() AS DataWindow
+        IF oDW != NULL
+            oDW:RefreshView()
         ENDIF
         RETURN
 
@@ -676,38 +676,38 @@ PUBLIC CLASS MainForm INHERIT System.Windows.Forms.Form
             oTb:Undo()
             RETURN
         ENDIF
-        LOCAL oF := SELF:ActiveWindow() AS DataWindow
-        IF oF != NULL
-            oF:Undo()
+        LOCAL oDW := SELF:ActiveWindow() AS DataWindow
+        IF oDW != NULL
+            oDW:Undo()
         ENDIF
         RETURN
 
     PRIVATE METHOD M_Commit( sender AS OBJECT, e AS EventArgs ) AS VOID
-        LOCAL oF := SELF:ActiveWindow() AS DataWindow
-        IF oF != NULL
-            oF:Commit()
+        LOCAL oDW := SELF:ActiveWindow() AS DataWindow
+        IF oDW != NULL
+            oDW:Commit()
         ENDIF
         RETURN
 
     PRIVATE METHOD M_Hex( sender AS OBJECT, e AS EventArgs ) AS VOID
-        LOCAL oF := SELF:ActiveWindow() AS DataWindow
-        IF oF != NULL
-            oF:ShowHex()
+        LOCAL oDW := SELF:ActiveWindow() AS DataWindow
+        IF oDW != NULL
+            oDW:ShowHex()
         ENDIF
         RETURN
 
     PRIVATE METHOD M_OnlyDeleted( sender AS OBJECT, e AS EventArgs ) AS VOID
-        LOCAL oF := SELF:ActiveWindow() AS DataWindow
-        IF oF != NULL
-            oF:SetView( oF:ShowsRecno, TRUE, TRUE )
+        LOCAL oDW := SELF:ActiveWindow() AS DataWindow
+        IF oDW != NULL
+            oDW:SetView( oDW:ShowsRecno, TRUE, TRUE )
             SELF:UpdateChecks()
         ENDIF
         RETURN
 
     PRIVATE METHOD M_AllRecords( sender AS OBJECT, e AS EventArgs ) AS VOID
-        LOCAL oF := SELF:ActiveWindow() AS DataWindow
-        IF oF != NULL
-            oF:SetView( oF:ShowsRecno, TRUE, FALSE )
+        LOCAL oDW := SELF:ActiveWindow() AS DataWindow
+        IF oDW != NULL
+            oDW:SetView( oDW:ShowsRecno, TRUE, FALSE )
             SELF:UpdateChecks()
         ENDIF
         RETURN
@@ -720,16 +720,16 @@ PUBLIC CLASS MainForm INHERIT System.Windows.Forms.Form
             ENDIF
             RETURN
         ENDIF
-        LOCAL oF := SELF:ActiveWindow() AS DataWindow
-        IF oF != NULL
-            oF:CopyRecord( FALSE )
+        LOCAL oDW := SELF:ActiveWindow() AS DataWindow
+        IF oDW != NULL
+            oDW:CopyRecord( FALSE )
         ENDIF
         RETURN
 
     PRIVATE METHOD M_CopyAdd( sender AS OBJECT, e AS EventArgs ) AS VOID
-        LOCAL oF := SELF:ActiveWindow() AS DataWindow
-        IF oF != NULL
-            oF:CopyRecord( TRUE )
+        LOCAL oDW := SELF:ActiveWindow() AS DataWindow
+        IF oDW != NULL
+            oDW:CopyRecord( TRUE )
         ENDIF
         RETURN
 
@@ -739,23 +739,23 @@ PUBLIC CLASS MainForm INHERIT System.Windows.Forms.Form
             oTb:Paste()
             RETURN
         ENDIF
-        LOCAL oF := SELF:ActiveWindow() AS DataWindow
-        IF oF != NULL
-            oF:PasteRecord()
+        LOCAL oDW := SELF:ActiveWindow() AS DataWindow
+        IF oDW != NULL
+            oDW:PasteRecord()
         ENDIF
         RETURN
 
     PRIVATE METHOD M_PasteAppend( sender AS OBJECT, e AS EventArgs ) AS VOID
-        LOCAL oF := SELF:ActiveWindow() AS DataWindow
-        IF oF != NULL
-            oF:PasteAppend( FALSE )
+        LOCAL oDW := SELF:ActiveWindow() AS DataWindow
+        IF oDW != NULL
+            oDW:PasteAppend( FALSE )
         ENDIF
         RETURN
 
     PRIVATE METHOD M_PasteAppendAll( sender AS OBJECT, e AS EventArgs ) AS VOID
-        LOCAL oF := SELF:ActiveWindow() AS DataWindow
-        IF oF != NULL
-            oF:PasteAppend( TRUE )
+        LOCAL oDW := SELF:ActiveWindow() AS DataWindow
+        IF oDW != NULL
+            oDW:PasteAppend( TRUE )
         ENDIF
         RETURN
 
@@ -772,18 +772,18 @@ PUBLIC CLASS MainForm INHERIT System.Windows.Forms.Form
         RETURN
 
     PRIVATE METHOD M_RecordCount( sender AS OBJECT, e AS EventArgs ) AS VOID
-        LOCAL oF := SELF:ActiveWindow() AS DataWindow
-        IF oF != NULL
-            oF:RefreshView()
-            MessageBox.Show( oF:Text, "Record Count" )
+        LOCAL oDW := SELF:ActiveWindow() AS DataWindow
+        IF oDW != NULL
+            oDW:RefreshView()
+            MessageBox.Show( oDW:Text, "Record Count" )
         ENDIF
         RETURN
 
     // --- Options ---
     PRIVATE METHOD M_ShowRecno( sender AS OBJECT, e AS EventArgs ) AS VOID
-        LOCAL oF := SELF:ActiveWindow() AS DataWindow
-        IF oF != NULL
-            oF:SetView( ! oF:ShowsRecno, oF:ShowsDeleted, oF:ShowsOnlyDeleted )
+        LOCAL oDW := SELF:ActiveWindow() AS DataWindow
+        IF oDW != NULL
+            oDW:SetView( ! oDW:ShowsRecno, oDW:ShowsDeleted, oDW:ShowsOnlyDeleted )
         ELSE
             SELF:oSettings:ShowRecno := ! SELF:oSettings:ShowRecno
             SELF:oSettings:Save()
@@ -792,9 +792,9 @@ PUBLIC CLASS MainForm INHERIT System.Windows.Forms.Form
         RETURN
 
     PRIVATE METHOD M_ShowDeleted( sender AS OBJECT, e AS EventArgs ) AS VOID
-        LOCAL oF := SELF:ActiveWindow() AS DataWindow
-        IF oF != NULL
-            oF:SetView( oF:ShowsRecno, ! oF:ShowsDeleted, FALSE )
+        LOCAL oDW := SELF:ActiveWindow() AS DataWindow
+        IF oDW != NULL
+            oDW:SetView( oDW:ShowsRecno, ! oDW:ShowsDeleted, FALSE )
         ELSE
             SELF:oSettings:ShowDeleted := ! SELF:oSettings:ShowDeleted
             SELF:oSettings:Save()
@@ -805,9 +805,9 @@ PUBLIC CLASS MainForm INHERIT System.Windows.Forms.Form
     PRIVATE METHOD M_AutoCommit( sender AS OBJECT, e AS EventArgs ) AS VOID
         SELF:oSettings:AutoCommit := ! SELF:mAutoCommit:Checked
         SELF:oSettings:Save()
-        LOCAL oF := SELF:ActiveWindow() AS DataWindow
-        IF oF != NULL
-            oF:AutoCommit := SELF:oSettings:AutoCommit
+        LOCAL oDW := SELF:ActiveWindow() AS DataWindow
+        IF oDW != NULL
+            oDW:AutoCommit := SELF:oSettings:AutoCommit
         ENDIF
         SELF:UpdateChecks()
         RETURN
@@ -837,25 +837,25 @@ PUBLIC CLASS MainForm INHERIT System.Windows.Forms.Form
 
     // --- Stage 2: Index / View ---
     PRIVATE METHOD M_IndexManager( sender AS OBJECT, e AS EventArgs ) AS VOID
-        LOCAL oF := SELF:ActiveWindow() AS DataWindow
-        IF oF != NULL
-            LOCAL dlg := IndexManagerDialog{ oF } AS IndexManagerDialog
+        LOCAL oDW := SELF:ActiveWindow() AS DataWindow
+        IF oDW != NULL
+            LOCAL dlg := IndexManagerDialog{ oDW } AS IndexManagerDialog
             dlg:ShowDialog( SELF )
         ENDIF
         RETURN
 
     PRIVATE METHOD M_SelectOrder( sender AS OBJECT, e AS EventArgs ) AS VOID
-        LOCAL oF := SELF:ActiveWindow() AS DataWindow
-        IF oF != NULL
-            oF:FocusOrder()
+        LOCAL oDW := SELF:ActiveWindow() AS DataWindow
+        IF oDW != NULL
+            oDW:FocusOrder()
         ENDIF
         RETURN
 
     PRIVATE METHOD M_ReIndex( sender AS OBJECT, e AS EventArgs ) AS VOID
-        LOCAL oF := SELF:ActiveWindow() AS DataWindow
-        IF oF != NULL
-            IF MessageBox.Show( "Rebuild all indexes of this file?", "ReIndex", MessageBoxButtons.YesNo, MessageBoxIcon.Question ) == DialogResult.Yes
-                IF oF:ReIndex()
+        LOCAL oDW := SELF:ActiveWindow() AS DataWindow
+        IF oDW != NULL
+            IF MessageBox.Show( "Rebuild all indexes oDW this file?", "ReIndex", MessageBoxButtons.YesNo, MessageBoxIcon.Question ) == DialogResult.Yes
+                IF oDW:ReIndex()
                     MessageBox.Show( "ReIndex finished.", "ReIndex" )
                 ENDIF
             ENDIF
@@ -863,66 +863,66 @@ PUBLIC CLASS MainForm INHERIT System.Windows.Forms.Form
         RETURN
 
     PRIVATE METHOD M_Form( sender AS OBJECT, e AS EventArgs ) AS VOID
-        LOCAL oF := SELF:ActiveWindow() AS DataWindow
-        IF oF != NULL
-            oF:ShowFormView( TRUE )
+        LOCAL oDW := SELF:ActiveWindow() AS DataWindow
+        IF oDW != NULL
+            oDW:ShowFormView( TRUE )
         ENDIF
         RETURN
 
     PRIVATE METHOD M_Browse( sender AS OBJECT, e AS EventArgs ) AS VOID
-        LOCAL oF := SELF:ActiveWindow() AS DataWindow
-        IF oF != NULL
-            oF:ShowFormView( FALSE )
+        LOCAL oDW := SELF:ActiveWindow() AS DataWindow
+        IF oDW != NULL
+            oDW:ShowFormView( FALSE )
         ENDIF
         RETURN
 
     PRIVATE METHOD M_Filter( sender AS OBJECT, e AS EventArgs ) AS VOID
-        LOCAL oF := SELF:ActiveWindow() AS DataWindow
-        IF oF != NULL
+        LOCAL oDW := SELF:ActiveWindow() AS DataWindow
+        IF oDW != NULL
             LOCAL dlg := InputDialog{ "Set Filter", ;
-                "Expression in X#/VO syntax, e.g.  STATUS != 'X'  or  ORDERDATE >= CToD('01.01.2026').  Empty = filter off.", ;
-                <STRING>{ "Filter" }, <STRING>{ oF:FilterText }, "", FALSE } AS InputDialog
+                "Expression in X#/VO syntax, e.g.  STATUS != 'X'  or  ORDERDATE >= CToD('01.01.2026').  Empty = filter oDWf.", ;
+                <STRING>{ "Filter" }, <STRING>{ oDW:FilterText }, "", FALSE } AS InputDialog
             IF dlg:ShowDialog( SELF ) == DialogResult.OK
-                oF:SetFilter( dlg:InputValue( 0 ) )
+                oDW:SetFilter( dlg:InputValue( 0 ) )
             ENDIF
         ENDIF
         RETURN
 
     PRIVATE METHOD M_Scope( sender AS OBJECT, e AS EventArgs ) AS VOID
-        LOCAL oF := SELF:ActiveWindow() AS DataWindow
-        IF oF != NULL
-            IF ! oF:HasOrder
+        LOCAL oDW := SELF:ActiveWindow() AS DataWindow
+        IF oDW != NULL
+            IF ! oDW:HasOrder
                 MessageBox.Show( "For a scope, please select an order first.", "Order Scope" )
                 RETURN
             ENDIF
             LOCAL dlg := InputDialog{ "Set Order Scope", ;
                 "Range in the active index. Character: the start of the key is enough. Date: DD.MM.YYYY. Empty = open.", ;
-                <STRING>{ "From", "To" }, <STRING>{ oF:ScopeFrom, oF:ScopeTo }, "", FALSE } AS InputDialog
+                <STRING>{ "From", "To" }, <STRING>{ oDW:ScopeFrom, oDW:ScopeTo }, "", FALSE } AS InputDialog
             IF dlg:ShowDialog( SELF ) == DialogResult.OK
-                oF:SetScope( dlg:InputValue( 0 ), dlg:InputValue( 1 ) )
+                oDW:SetScope( dlg:InputValue( 0 ), dlg:InputValue( 1 ) )
             ENDIF
         ENDIF
         RETURN
 
     // --- Stage 3: Utils ---
     PRIVATE METHOD M_Replace( sender AS OBJECT, e AS EventArgs ) AS VOID
-        LOCAL oF := SELF:ActiveWindow() AS DataWindow
-        IF oF != NULL
-            oF:ReplaceValues()
+        LOCAL oDW := SELF:ActiveWindow() AS DataWindow
+        IF oDW != NULL
+            oDW:ReplaceValues()
         ENDIF
         RETURN
 
     // Pack as in xBase: close the window, rebuild DBF+FPT, recreate indexes, reopen the window
     PRIVATE METHOD M_Pack( sender AS OBJECT, e AS EventArgs ) AS VOID
-        LOCAL oF := SELF:ActiveWindow() AS DataWindow
-        IF oF == NULL
+        LOCAL oDW := SELF:ActiveWindow() AS DataWindow
+        IF oDW == NULL
             RETURN
         ENDIF
-        IF ! oF:Exclusive .OR. oF:ReadOnly
+        IF ! oDW:Exclusive .OR. oDW:ReadOnly
             MessageBox.Show( "Pack needs the file opened EXCLUSIVE and not read-only.", "Pack", MessageBoxButtons.OK, MessageBoxIcon.Information )
             RETURN
         ENDIF
-        LOCAL nDelCount := oF:CountDeleted() AS INT
+        LOCAL nDelCount := oDW:CountDeleted() AS INT
         LOCAL cQuestion AS STRING
         IF nDelCount == 0
             cQuestion := "There are no deleted records." + Environment.NewLine + "Rebuild DBF and FPT compactly anyway?"
@@ -934,11 +934,11 @@ PUBLIC CLASS MainForm INHERIT System.Windows.Forms.Form
                 "Pack", MessageBoxButtons.YesNo, MessageBoxIcon.Question ) != DialogResult.Yes
             RETURN
         ENDIF
-        LOCAL cFile  := oF:FileName AS STRING
-        LOCAL cDriver := oF:Driver AS STRING
-        LOCAL lRecno  := oF:ShowsRecno AS LOGIC
-        LOCAL lDel    := oF:ShowsDeleted AS LOGIC
-        oF:Close()
+        LOCAL cFile  := oDW:FileName AS STRING
+        LOCAL cDriver := oDW:Driver AS STRING
+        LOCAL lRecno  := oDW:ShowsRecno AS LOGIC
+        LOCAL lDel    := oDW:ShowsDeleted AS LOGIC
+        oDW:Close()
         LOCAL cMessage := "" AS STRING
         LOCAL lOk := FALSE AS LOGIC
         SELF:Cursor := Cursors.WaitCursor
@@ -952,23 +952,23 @@ PUBLIC CLASS MainForm INHERIT System.Windows.Forms.Form
         RETURN
 
     PRIVATE METHOD M_Zap( sender AS OBJECT, e AS EventArgs ) AS VOID
-        LOCAL oF := SELF:ActiveWindow() AS DataWindow
-        IF oF != NULL
-            oF:Zap()
+        LOCAL oDW := SELF:ActiveWindow() AS DataWindow
+        IF oDW != NULL
+            oDW:Zap()
         ENDIF
         RETURN
 
     PRIVATE METHOD M_ExportJson( sender AS OBJECT, e AS EventArgs ) AS VOID
-        LOCAL oF := SELF:ActiveWindow() AS DataWindow
-        IF oF != NULL
-            oF:ExportJson()
+        LOCAL oDW := SELF:ActiveWindow() AS DataWindow
+        IF oDW != NULL
+            oDW:ExportJson()
         ENDIF
         RETURN
 
     PRIVATE METHOD M_Fpt( sender AS OBJECT, e AS EventArgs ) AS VOID
-        LOCAL oF := SELF:ActiveWindow() AS DataWindow
-        IF oF != NULL
-            oF:FptReport()
+        LOCAL oDW := SELF:ActiveWindow() AS DataWindow
+        IF oDW != NULL
+            oDW:FptReport()
         ELSE
             LOCAL ofd := OpenFileDialog{} AS OpenFileDialog
             ofd:Title := "Select the DBF for the FPT analysis"
