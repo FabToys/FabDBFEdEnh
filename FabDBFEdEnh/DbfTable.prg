@@ -1298,10 +1298,30 @@ PUBLIC CLASS DbfTable
             ELSE
                 cBag := Path.ChangeExtension( SELF:FileName, ".cdx" )
             ENDIF
+            // NTX: creating an order replaces the open orders, so remember the open files and open them again
+            LOCAL aOpenFiles := List<STRING>{} AS List<STRING>
+            IF SELF:IsNtx
+                FOR VAR i := 1 TO SELF:GetOrders():Count
+                    LOCAL cOpen := SELF:OrderFilePath( i ) AS STRING
+                    IF cOpen:Length > 0 .AND. ! aOpenFiles:Contains( cOpen )
+                        aOpenFiles:Add( cOpen )
+                    ENDIF
+                NEXT
+                SELF:Sel()
+            ENDIF
             LOCAL cError := StructureRebuild.CreateOrder( cBag, cName, cExpression, cCondition, lUnique ) AS STRING
             IF cError:Length > 0
                 oResult:Error := cError
+                IF SELF:IsNtx
+                    StructureRebuild.ReopenIndexFiles( aOpenFiles )
+                ENDIF
             ELSE
+                IF SELF:IsNtx
+                    IF ! aOpenFiles:Contains( cBag )
+                        aOpenFiles:Add( cBag )
+                    ENDIF
+                    StructureRebuild.ReopenIndexFiles( aOpenFiles )
+                ENDIF
                 oResult:Done := 1
             ENDIF
         CATCH ex AS Exception
@@ -1363,6 +1383,49 @@ PUBLIC CLASS DbfTable
                 (STRING) aOrd:GetValue( 2 ), (STRING) aOrd:GetValue( 3 ) == "1" ) )
         NEXT
         RETURN aStatus
+
+    /// <summary>Full path of the index file of an open order (1-based position), "" when it cannot be told</summary>
+    PRIVATE METHOD OrderFilePath( nPos AS INT ) AS STRING
+        TRY
+            SELF:Sel()
+            LOCAL cFull := ((STRING) DbOrderInfo( DBOI_FULLPATH, "", nPos )):Trim() AS STRING
+            IF cFull:Length > 0
+                RETURN cFull
+            ENDIF
+        CATCH
+            NOP
+        END TRY
+        RETURN ""
+
+    /// <summary>The orders that are open: name, key, condition, unique ("1"/"0"). For NTX tables these are the only orders
+    /// the application can know about, because an NTX file is not linked to its DBF.</summary>
+    PUBLIC METHOD OpenOrders() AS List<STRING[]>
+        LOCAL aList := List<STRING[]>{} AS List<STRING[]>
+        LOCAL aOrders := SELF:GetOrders() AS List<STRING[]>
+        FOR VAR i := 0 TO aOrders:Count - 1
+            LOCAL aOrd := aOrders[i] AS STRING[]
+            aList:Add( <STRING>{ (STRING) aOrd:GetValue( 0 ), (STRING) aOrd:GetValue( 1 ), (STRING) aOrd:GetValue( 2 ), ;
+                IIF( SELF:IsUniqueOrder( (STRING) aOrd:GetValue( 0 ), (STRING) aOrd:GetValue( 3 ) ), "1", "0" ) } )
+        NEXT
+        RETURN aList
+
+    /// <summary>NTX: create the orders of the list (name, key, for, unique) as separate .ntx files. The other open index
+    /// files stay open. Returns one status per order ("" = created, "~text" = information, else an error).</summary>
+    PUBLIC METHOD RebuildNtxOrders( aList AS List<STRING[]>, lOverwrite AS LOGIC ) AS List<STRING>
+        LOCAL aTargets := List<STRING>{} AS List<STRING>
+        FOREACH aOrd AS STRING[] IN aList
+            aTargets:Add( StructureRebuild.NtxPath( SELF:FileName, (STRING) aOrd:GetValue( 0 ) ):ToUpperInvariant() )
+        NEXT
+        // index files that are open now and are not recreated: open them again afterwards
+        LOCAL aKeep := List<STRING>{} AS List<STRING>
+        FOR VAR i := 1 TO SELF:GetOrders():Count
+            LOCAL cPath := SELF:OrderFilePath( i ) AS STRING
+            IF cPath:Length > 0 .AND. ! aTargets:Contains( cPath:ToUpperInvariant() ) .AND. ! aKeep:Contains( cPath )
+                aKeep:Add( cPath )
+            ENDIF
+        NEXT
+        SELF:Sel()
+        RETURN StructureRebuild.CreateNtxOrders( SELF:FileName, aList, lOverwrite, aKeep )
 
     // =====================================================================
     // Zap

@@ -1452,13 +1452,23 @@ PUBLIC CLASS DataWindow INHERIT System.Windows.Forms.Form
             RETURN aStatus
         ENDIF
         IF SELF:oTable:IsNtx
-            MessageBox.Show( "Recreating all orders is not yet supported for DBFNTX.", "Create indexes" )
-            RETURN aStatus
+            // NTX: one file per order. Existing files: Yes = replace, No = keep them, Cancel = nothing happens (empty list)
+            LOCAL lOverwrite := TRUE AS LOGIC
+            IF ! StructureRebuild.AskNtxOverwrite( SELF:cFile, aList, "Create indexes", REF lOverwrite )
+                RETURN aStatus
+            ENDIF
+            aStatus := SELF:oTable:RebuildNtxOrders( aList, lOverwrite )
+        ELSE
+            aStatus := SELF:oTable:RebuildOrders( aList )
         ENDIF
-        aStatus := SELF:oTable:RebuildOrders( aList )
         SELF:LoadOrders()
         SELF:LoadList( nRec )
         RETURN aStatus
+
+    /// <summary>The orders that are open (name, key, for, unique): for an NTX table they are what can be recreated after a
+    /// structure change, because the NTX files are not linked to the DBF</summary>
+    PUBLIC METHOD OpenOrders() AS List<STRING[]>
+        RETURN SELF:oTable:OpenOrders()
 
     // for dialogs that work in this workarea (e.g. create indexes)
     PUBLIC METHOD SelectArea() AS VOID

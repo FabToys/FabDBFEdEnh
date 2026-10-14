@@ -416,6 +416,7 @@ PUBLIC CLASS MainForm INHERIT System.Windows.Forms.Form
         LOCAL lRecno    := SELF:oSettings:ShowRecno AS LOGIC
         LOCAL lDel      := SELF:oSettings:ShowDeleted AS LOGIC
         LOCAL lWasOpen := FALSE AS LOGIC
+        LOCAL aKnownOrders := NULL AS List<STRING[]>
         LOCAL oDW := SELF:ActiveWindow() AS DataWindow
         IF oDW != NULL
             IF ! oDW:Exclusive .OR. oDW:ReadOnly
@@ -428,6 +429,9 @@ PUBLIC CLASS MainForm INHERIT System.Windows.Forms.Form
             lRecno    := oDW:ShowsRecno
             lDel      := oDW:ShowsDeleted
             lWasOpen := TRUE
+            IF cDriver:ToUpper():Contains( "NTX" )
+                aKnownOrders := oDW:OpenOrders()      // NTX files are not linked to the DBF: remember what is open
+            ENDIF
             oDW:Close()                  // Close the workarea so the file can be rebuilt
         ELSE
             LOCAL ofd := OpenFileDialog{} AS OpenFileDialog
@@ -441,6 +445,7 @@ PUBLIC CLASS MainForm INHERIT System.Windows.Forms.Form
             cFile := ofd:FileName
         ENDIF
         LOCAL dlg := StructureDialog{ cFile, cDriver } AS StructureDialog
+        dlg:KnownOrders := aKnownOrders
         IF dlg:Loaded
             dlg:ShowDialog( SELF )
         ENDIF

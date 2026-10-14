@@ -144,12 +144,20 @@ PUBLIC CLASS IndexManagerDialog INHERIT System.Windows.Forms.Form
     PRIVATE METHOD Populate() AS VOID
         LOCAL cBase := System.IO.Path.GetFileNameWithoutExtension( SELF:oWindow:FileName ) AS STRING
         SELF:lv:Items:Clear()
-        FOREACH aOrder AS STRING[] IN SELF:oWindow:GetOrders()
-            LOCAL cBag := (STRING) aOrder:GetValue( 3 ) AS STRING
-            IF cBag:Length == 0 .OR. String.Compare( System.IO.Path.GetFileNameWithoutExtension( cBag ), cBase, TRUE ) == 0
-                SELF:MakeItem( (STRING) aOrder:GetValue( 0 ), (STRING) aOrder:GetValue( 1 ), (STRING) aOrder:GetValue( 2 ), FALSE, "" )
-            ENDIF
-        NEXT
+        IF SELF:oWindow:Driver:ToUpper():Contains( "NTX" )
+            // NTX: no production index, every open order is a file of its own
+            FOREACH aOrder AS STRING[] IN SELF:oWindow:OpenOrders()
+                SELF:MakeItem( (STRING) aOrder:GetValue( 0 ), (STRING) aOrder:GetValue( 1 ), (STRING) aOrder:GetValue( 2 ), ;
+                    (STRING) aOrder:GetValue( 3 ) == "1", "" )
+            NEXT
+        ELSE
+            FOREACH aOrder AS STRING[] IN SELF:oWindow:GetOrders()
+                LOCAL cBag := (STRING) aOrder:GetValue( 3 ) AS STRING
+                IF cBag:Length == 0 .OR. String.Compare( System.IO.Path.GetFileNameWithoutExtension( cBag ), cBase, TRUE ) == 0
+                    SELF:MakeItem( (STRING) aOrder:GetValue( 0 ), (STRING) aOrder:GetValue( 1 ), (STRING) aOrder:GetValue( 2 ), FALSE, "" )
+                ENDIF
+            NEXT
+        ENDIF
         SELF:lChanged := FALSE
         RETURN
 
@@ -256,8 +264,13 @@ PUBLIC CLASS IndexManagerDialog INHERIT System.Windows.Forms.Form
             MessageBox.Show( "Creating indexes is only possible when the file is opened EXCLUSIVE and not read-only.", SELF:Text )
             RETURN
         ENDIF
-        IF MessageBox.Show( "All indexes of the production CDX will now be removed and the " + Convert.ToString( SELF:lv:Items:Count ) + ;
-                " orders of the list recreated." + Environment.NewLine + Environment.NewLine + "Continue?", SELF:Text, ;
+        LOCAL lNtx := SELF:oWindow:Driver:ToUpper():Contains( "NTX" ) AS LOGIC
+        LOCAL cConfirm := IIF( lNtx, ;
+            "The " + Convert.ToString( SELF:lv:Items:Count ) + " orders of the list will be created as separate .ntx files next to the table." + ;
+                Environment.NewLine + "You are asked about files that already exist.", ;
+            "All indexes of the production CDX will now be removed and the " + Convert.ToString( SELF:lv:Items:Count ) + ;
+                " orders of the list recreated." ) AS STRING
+        IF MessageBox.Show( cConfirm + Environment.NewLine + Environment.NewLine + "Continue?", SELF:Text, ;
                 MessageBoxButtons.YesNo, MessageBoxIcon.Question ) != DialogResult.Yes
             RETURN
         ENDIF
@@ -272,15 +285,24 @@ PUBLIC CLASS IndexManagerDialog INHERIT System.Windows.Forms.Form
         FINALLY
             SELF:Cursor := Cursors.Default
         END TRY
+        IF aStatus:Count == 0
+            RETURN                         // cancelled (or nothing was done)
+        ENDIF
         LOCAL nError := 0 AS INT
+        LOCAL nOk := 0 AS INT
         FOR VAR i := 0 TO Math.Min( aStatus:Count, SELF:lv:Items:Count ) - 1
-            SELF:lv:Items[i]:SubItems[4]:Text := IIF( aStatus[i]:Length == 0, "OK", "Error: " + aStatus[i] )
-            IF aStatus[i]:Length > 0
+            IF aStatus[i]:Length == 0
+                SELF:lv:Items[i]:SubItems[4]:Text := "OK"
+                nOk++
+            ELSEIF aStatus[i]:StartsWith( "~" )
+                SELF:lv:Items[i]:SubItems[4]:Text := aStatus[i]:Substring( 1 )         // information, not an error
+            ELSE
+                SELF:lv:Items[i]:SubItems[4]:Text := "Error: " + aStatus[i]
                 nError++
             ENDIF
         NEXT
         SELF:lChanged := FALSE
-        MessageBox.Show( Convert.ToString( aList:Count - nError ) + " orders created" + ;
+        MessageBox.Show( Convert.ToString( nOk ) + " orders created" + ;
             IIF( nError > 0, ", " + Convert.ToString( nError ) + " with errors (see column Status)", "" ) + ".", SELF:Text )
         RETURN
 

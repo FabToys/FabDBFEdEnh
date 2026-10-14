@@ -33,10 +33,13 @@ source code and JSON export of a table, and a JSON export that makes the content
 ### Memo and binary data
 - Memo fields open in a text editor (ICSharpCode.TextEditor), trailing padding is handled for you
 - **Binary memo** (`M:B`) and **binary character** (`C:B`) fields open in a **hex viewer**, as does the **hex view of the current record**
-- **FPT analysis**: block types, dead space, overlapping or broken memo pointers
+- **FPT analysis** (FPT = the FoxPro / Visual FoxPro memo file `name.fpt` that goes with `name.dbf`): checks the memo file for
+  block types, dead (unused) space, and overlapping or broken memo pointers. The table must be opened shared.
 
 ### Indexes
 - **Index manager**: create, edit and delete orders, take the orders of another DBF, rebuild the whole production CDX
+  (for **DBFNTX**: every order becomes a file of its own, `name.ntx`; files that already exist are asked about: *Yes* replaces
+  them, *No* keeps them and creates only the others, *Cancel* does nothing)
 - Open index files, select the active order, **ReIndex**
 
 ### Structure
@@ -89,7 +92,8 @@ Everything in the menu, and what is still missing.
 | | Set Active Order | ✅ | |
 | | ReIndex | ✅ | needs exclusive access |
 | | Seek Index Value | ✅ | soft seek |
-| | Recreate all orders for **DBFNTX** | ❌ | works for CDX only |
+| | Recreate all orders for **DBFNTX** | ✅ | one `.ntx` file per order; asks *Yes / No / Cancel* for existing files; only the **open** orders are known, because an NTX file is not linked to its DBF |
+| | Orders kept across Modify Structure (NTX) | ✅ | the open orders are offered for recreation afterwards (CDX: the production CDX is read from disk) |
 | **Record** | Append, Delete, Recall, Recall All | ✅ | |
 | | Scoped Delete | ✅ | deletes the records of the current view (filter / scope) |
 | | Go To Top / Previous / Next / Bottom, Goto RecNo, Find | ✅ | |
@@ -107,7 +111,7 @@ Everything in the menu, and what is still missing.
 | | Link | ❌ | menu entry only (behaviour undefined) |
 | **Utils** | DBReplace | ✅ | value or expression, optional condition |
 | | Pack, Zap, Record Count | ✅ | |
-| | FPT Analysis | ✅ | |
+| | FPT Analysis | ✅ | integrity check of the memo file (`.fpt`): block types, dead space, broken pointers |
 | | Export JSON | ✅ | whole table or current view |
 | | Generate Create PRG | ✅ | X# `DbCreate`, X# `RddFieldInfo`, Visual FoxPro; optional indexes and records |
 | | Generate DBF Desc File | ✅ | plain text |

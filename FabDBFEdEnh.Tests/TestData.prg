@@ -13,6 +13,8 @@ BEGIN NAMESPACE FabDBFEdEnh.Tests
 /// <summary>Creates throw-away tables in a temp folder; the folder is deleted again by Dispose</summary>
 PUBLIC CLASS TestData IMPLEMENTS IDisposable
     PUBLIC Folder AS STRING
+    /// <summary>RDD used to create and fill the tables (default DBFCDX)</summary>
+    PUBLIC Driver := "DBFCDX" AS STRING
 
     PUBLIC CONSTRUCTOR()
         SELF:Folder := Path.Combine( Path.GetTempPath(), "FabDBFEdEnhTests_" + Guid.NewGuid():ToString( "N" ) )
@@ -30,7 +32,7 @@ PUBLIC CLASS TestData IMPLEMENTS IDisposable
     /// <summary>Create a DBF (driver DBFCDX) with the given fields and leave it closed</summary>
     PUBLIC METHOD CreateTable( cName AS STRING, aFields AS RddFieldInfo[] ) AS STRING
         LOCAL cFile := Path.Combine( SELF:Folder, cName + ".dbf" ) AS STRING
-        IF ! CoreDb.Create( cFile, aFields, "DBFCDX", TRUE, "TESTCREATE", "", FALSE, FALSE )
+        IF ! CoreDb.Create( cFile, aFields, SELF:Driver, TRUE, "TESTCREATE", "", FALSE, FALSE )
             THROW Exception{ "CoreDb.Create failed for " + cFile }
         ENDIF
         DbCloseArea()
@@ -41,7 +43,7 @@ PUBLIC CLASS TestData IMPLEMENTS IDisposable
 
     /// <summary>Append one record; values in field order (1-based array, AZ off)</summary>
     PUBLIC METHOD Append( cFile AS STRING, aValues AS OBJECT[] ) AS VOID
-        IF ! DbUseArea( TRUE, "DBFCDX", cFile, "TESTAPPEND", FALSE, FALSE )
+        IF ! DbUseArea( TRUE, SELF:Driver, cFile, "TESTAPPEND", FALSE, FALSE )
             THROW Exception{ "Cannot open " + cFile }
         ENDIF
         DbAppend()

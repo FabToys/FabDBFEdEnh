@@ -918,6 +918,160 @@ PUBLIC CLASS DbfTableTests
         END TRY
         RETURN
 
+    // ------------------------------------------------------------------
+    // DBFNTX: one file per order
+    // ------------------------------------------------------------------
+    PRIVATE STATIC METHOD OpenNtxCab( oData AS TestData ) AS DbfTable
+        oData:Driver := "DBFNTX"
+        LOCAL aFields := <RddFieldInfo>{ TestData.Field( "NAME", "C", 10, 0 ), TestData.Field( "QTY", "N", 5, 0 ) } AS RddFieldInfo[]
+        LOCAL cFile := oData:CreateTable( "ntxcab", aFields ) AS STRING
+        oData:Append( cFile, <OBJECT>{ "C", 1 } )
+        oData:Append( cFile, <OBJECT>{ "A", 2 } )
+        oData:Append( cFile, <OBJECT>{ "B", 3 } )
+        LOCAL oTable := DbfTable{} AS DbfTable
+        LOCAL cError := "" AS STRING
+        Assert.True( oTable:Open( cFile, "DBFNTX", TRUE, FALSE, REF cError ), cError )
+        Assert.True( oTable:IsNtx )
+        RETURN oTable
+
+    PRIVATE STATIC METHOD NtxList() AS List<STRING[]>
+        VAR aList := List<STRING[]>{}
+        aList:Add( <STRING>{ "BYNAME", "NAME", "", "0" } )
+        aList:Add( <STRING>{ "BYQTY", "STR(QTY,5)", "", "0" } )
+        RETURN aList
+
+    [Fact];
+    PUBLIC METHOD NtxOrders_AreCreatedAsSeparateFiles() AS VOID
+        VAR oData := TestData{}
+        TRY
+            VAR oTable := OpenNtxCab( oData )
+            Assert.Empty( StructureRebuild.ExistingNtxFiles( oTable:FileName, NtxList() ) )
+            VAR aStatus := oTable:RebuildNtxOrders( NtxList(), TRUE )
+            Assert.Equal( 2, aStatus:Count )
+            Assert.Equal( "", aStatus[0] )
+            Assert.Equal( "", aStatus[1] )
+            Assert.True( System.IO.File.Exists( StructureRebuild.NtxPath( oTable:FileName, "BYNAME" ) ) )
+            Assert.True( System.IO.File.Exists( StructureRebuild.NtxPath( oTable:FileName, "BYQTY" ) ) )
+            Assert.Contains( "BYNAME", oTable:OrderNames() )
+            Assert.Contains( "BYQTY", oTable:OrderNames() )
+            // the order sorts: A, B, C
+            oTable:SetFocusOrder( "BYNAME" )
+            oTable:ActiveOrder := "BYNAME"
+            oTable:LoadList()
+            Assert.Equal( 2L, oTable:Recs[0] )
+            Assert.Equal( 1L, oTable:Recs[2] )
+            oTable:Close()
+        FINALLY
+            oData:Dispose()
+        END TRY
+        RETURN
+
+    [Fact];
+    PUBLIC METHOD NtxOrders_ExistingFilesAreReplacedOrKept() AS VOID
+        VAR oData := TestData{}
+        TRY
+            VAR oTable := OpenNtxCab( oData )
+            oTable:RebuildNtxOrders( NtxList(), TRUE )
+            Assert.Equal( 2, StructureRebuild.ExistingNtxFiles( oTable:FileName, NtxList() ):Count )
+            LOCAL cByName := StructureRebuild.NtxPath( oTable:FileName, "BYNAME" ) AS STRING
+            // Yes: replaced (no error, orders open again)
+            VAR aYes := oTable:RebuildNtxOrders( NtxList(), TRUE )
+            Assert.Equal( "", aYes[0] )
+            Assert.Equal( "", aYes[1] )
+            Assert.True( System.IO.File.Exists( cByName ) )
+            Assert.Contains( "BYNAME", oTable:OrderNames() )
+            // No: the files are kept, reported as information, and their orders are available
+            LOCAL cTable := oTable:FileName AS STRING
+            oTable:Close()
+            System.IO.File.SetLastWriteTime( cByName, DateTime{ 2001, 1, 1 } )     // marker: the file must not be rewritten
+            oTable := DbfTable{}
+            LOCAL cError := "" AS STRING
+            Assert.True( oTable:Open( cTable, "DBFNTX", TRUE, FALSE, REF cError ), cError )
+            VAR aNo := oTable:RebuildNtxOrders( NtxList(), FALSE )
+            Assert.StartsWith( "~", aNo[0] )
+            Assert.StartsWith( "~", aNo[1] )
+            Assert.Equal( DateTime{ 2001, 1, 1 }, System.IO.File.GetLastWriteTime( cByName ) )   // not touched
+            Assert.Contains( "BYNAME", oTable:OrderNames() )
+            Assert.Contains( "BYQTY", oTable:OrderNames() )
+            oTable:Close()
+        FINALLY
+            oData:Dispose()
+        END TRY
+        RETURN
+
+    [Fact];
+    PUBLIC METHOD CreateOrder_ForConditionIsAppliedForCdx() AS VOID
+        VAR oData := TestData{}
+        TRY
+            VAR oTable := OpenTable( CreateFive( oData ), TRUE )              // QTY 1..5
+            Assert.Equal( 1, oTable:CreateOrder( "BIG", "STR(QTY,5)", "QTY > 3", FALSE ):Done )
+            oTable:SetFocusOrder( "BIG" )
+            oTable:ActiveOrder := "BIG"
+            oTable:LoadList()
+            Assert.Equal( 2, oTable:Recs:Count )                               // only records 4 and 5 are in the order
+            VAR aOrders := oTable:GetOrders()
+            Assert.Equal( "QTY > 3", (STRING) aOrders[0]:GetValue( 2 ) )
+            oTable:Close()
+        FINALLY
+            oData:Dispose()
+        END TRY
+        RETURN
+
+    [Fact];
+    PUBLIC METHOD CreateOrder_ForConditionIsAppliedForNtx() AS VOID
+        VAR oData := TestData{}
+        TRY
+            VAR oTable := OpenNtxCab( oData )                                  // QTY 1..3
+            Assert.Equal( 1, oTable:CreateOrder( "BIG", "STR(QTY,5)", "QTY > 1", FALSE ):Done )
+            oTable:SetFocusOrder( "BIG" )
+            oTable:ActiveOrder := "BIG"
+            oTable:LoadList()
+            Assert.Equal( 2, oTable:Recs:Count )
+            Assert.Equal( "QTY > 1", (STRING) oTable:OpenOrders()[0]:GetValue( 2 ) )
+            oTable:Close()
+        FINALLY
+            oData:Dispose()
+        END TRY
+        RETURN
+
+    [Fact];
+    PUBLIC METHOD NtxOrders_OtherOpenIndexFilesStayOpen() AS VOID
+        VAR oData := TestData{}
+        TRY
+            VAR oTable := OpenNtxCab( oData )
+            Assert.Equal( 1, oTable:CreateOrder( "OTHER", "UPPER(NAME)", "", FALSE ):Done )
+            VAR aOnlyOne := List<STRING[]>{}
+            aOnlyOne:Add( <STRING>{ "BYNAME", "NAME", "", "0" } )
+            VAR aStatus := oTable:RebuildNtxOrders( aOnlyOne, TRUE )
+            Assert.Equal( "", aStatus[0] )
+            VAR aNames := oTable:OrderNames()
+            Assert.Contains( "BYNAME", aNames )
+            Assert.Contains( "OTHER", aNames )           // was open before and is open again
+            oTable:Close()
+        FINALLY
+            oData:Dispose()
+        END TRY
+        RETURN
+
+    [Fact];
+    PUBLIC METHOD OpenOrders_ListsNameKeyForAndUnique() AS VOID
+        VAR oData := TestData{}
+        TRY
+            VAR oTable := OpenNtxCab( oData )
+            oTable:CreateOrder( "BYNAME", "NAME", "", FALSE )
+            oTable:CreateOrder( "ONLYBIG", "STR(QTY,5)", "QTY > 1", FALSE )
+            VAR aOpen := oTable:OpenOrders()
+            Assert.Equal( 2, aOpen:Count )
+            Assert.Equal( "BYNAME", (STRING) aOpen[0]:GetValue( 0 ) )
+            Assert.Equal( "NAME", (STRING) aOpen[0]:GetValue( 1 ) )
+            Assert.Equal( "QTY > 1", (STRING) aOpen[1]:GetValue( 2 ) )
+            Assert.Equal( "0", (STRING) aOpen[1]:GetValue( 3 ) )
+            oTable:Close()
+        FINALLY
+            oData:Dispose()
+        END TRY
+        RETURN
+
     [Fact];
     PUBLIC METHOD WriteMemo_StoresTextAndAllowsUndo() AS VOID
         VAR oData := TestData{}

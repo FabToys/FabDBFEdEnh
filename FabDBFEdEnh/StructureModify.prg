@@ -1,4 +1,4 @@
-USING System
+﻿USING System
 USING System.IO
 USING System.Drawing
 USING System.Globalization
@@ -53,6 +53,8 @@ PUBLIC CLASS StructureDialog INHERIT System.Windows.Forms.Form
     PRIVATE aFields := List<FieldDef>{} AS List<FieldDef>
     PUBLIC  Loaded := FALSE AS LOGIC
     PUBLIC  Rebuilt := FALSE AS LOGIC
+    /// <summary>NTX only: the orders that were open (name, key, for, unique), see StructureRebuild.Execute</summary>
+    PUBLIC  KnownOrders := NULL AS List<STRING[]>
 
     PUBLIC CONSTRUCTOR( cFile AS STRING, cRdd AS STRING )
         SELF:cFile  := cFile
@@ -258,7 +260,7 @@ PUBLIC CLASS StructureDialog INHERIT System.Windows.Forms.Form
         LOCAL aOrders  := List<STRING[]>{} AS List<STRING[]>
         SELF:Cursor := Cursors.WaitCursor
         TRY
-            SELF:Rebuilt := StructureRebuild.Execute( SELF:cFile, SELF:cDriver, SELF:aFields, REF cMessage, REF aOrders )
+            SELF:Rebuilt := StructureRebuild.Execute( SELF:cFile, SELF:cDriver, SELF:aFields, REF cMessage, REF aOrders, SELF:KnownOrders )
         FINALLY
             SELF:Cursor := Cursors.Default
         END TRY
@@ -278,7 +280,10 @@ END CLASS
 /// <summary>Performs the rebuild: new DBF, copy the data, backup, recreate the indexes</summary>
 PUBLIC STATIC CLASS StructureRebuild
 
-    PUBLIC STATIC METHOD Execute( cFile AS STRING, cDriver AS STRING, aFields AS List<FieldDef>, cMessage REF STRING, aOrdersFrom REF List<STRING[]> ) AS LOGIC
+    /// <summary>aKnownOrders (optional): the orders (name, key, for, unique) that were open for an NTX table; NTX files are not
+    /// linked to the DBF, so they cannot be read from the file</summary>
+    PUBLIC STATIC METHOD Execute( cFile AS STRING, cDriver AS STRING, aFields AS List<FieldDef>, cMessage REF STRING, aOrdersFrom REF List<STRING[]>, ;
+                                  aKnownOrders := NULL AS List<STRING[]> ) AS LOGIC
         LOCAL cFolder  := Path.GetDirectoryName( cFile ) AS STRING
         LOCAL cBase   := Path.GetFileNameWithoutExtension( cFile ) AS STRING
         LOCAL cExtension  := IIF( Path.GetExtension( cFile ):Length == 0, ".dbf", Path.GetExtension( cFile ) ) AS STRING
@@ -360,6 +365,13 @@ PUBLIC STATIC CLASS StructureRebuild
                 ENDIF
             NEXT
             OrdSetFocus( 0 )
+            // NTX: the orders that were open in the window (an NTX file knows nothing about its DBF)
+            IF lNtx .AND. aKnownOrders != NULL
+                FOREACH aKnown AS STRING[] IN aKnownOrders
+                    aOrders:Add( <STRING>{ (STRING) aKnown:GetValue( 0 ), (STRING) aKnown:GetValue( 1 ), ;
+                        (STRING) aKnown:GetValue( 2 ), (STRING) aKnown:GetValue( 3 ) } )
+                NEXT
+            ENDIF
 
             // Mapping new field position -> old field position
             LOCAL aSource := List<INT>{} AS List<INT>
@@ -493,6 +505,12 @@ PUBLIC STATIC CLASS StructureRebuild
         ENDIF
         IF aOther:Count > 0
             cMessage += Environment.NewLine + Environment.NewLine + "These index files were NOT rebuilt:" + Environment.NewLine + String.Join( Environment.NewLine, aOther:ToArray() )
+        ENDIF
+        IF lNtx
+            cMessage += Environment.NewLine + Environment.NewLine + "NTX index files are not linked to the table, so the existing .ntx files " + ;
+                "are out of date after a structure change." + Environment.NewLine + ;
+                IIF( aOrders:Count > 0, "The orders that were open are offered for recreation (the old files are replaced after a question).", ;
+                    "Open the orders you need before the change, or recreate them with the Index Manager." )
         ENDIF
         RETURN TRUE
 
@@ -711,13 +729,121 @@ PUBLIC STATIC CLASS StructureRebuild
                 oCond:ForExpression := cFor:Trim()
                 oCond:ForBlock      := (ICodeblock) MCompile( cFor:Trim() )
             ENDIF
-            IF ! CoreDb.OrdCreate( cBag, cName, cKey, (ICodeblock) MCompile( cKey ), lUnique, oCond )
+            // The condition has to be set with OrdCondSet right before OrdCreate: a DbOrderCondInfo given to OrdCreate is
+            // ignored by the RDD (the FOR condition got lost and the order contained every record). Setting it every time
+            // also replaces whatever condition a previous call left behind.
+            CoreDb.OrdCondSet( oCond )
+            IF ! CoreDb.OrdCreate( cBag, cName, cKey, (ICodeblock) MCompile( cKey ), lUnique, NULL )
                 RETURN "OrdCreate returned FALSE"
             ENDIF
         CATCH ex AS Exception
             RETURN ex:Message
         END TRY
         RETURN ""
+
+    // =====================================================================
+    // NTX: every order is a file of its own (name.ntx next to the DBF), there is no production index
+    // =====================================================================
+    /// <summary>Path of the NTX file of an order</summary>
+    PUBLIC STATIC METHOD NtxPath( cDbf AS STRING, cName AS STRING ) AS STRING
+        RETURN Path.Combine( Path.GetDirectoryName( cDbf ), cName + ".ntx" )
+
+    /// <summary>The NTX files of the orders in aList (name, key, for, unique) that already exist</summary>
+    PUBLIC STATIC METHOD ExistingNtxFiles( cDbf AS STRING, aList AS List<STRING[]> ) AS List<STRING>
+        LOCAL aFound := List<STRING>{} AS List<STRING>
+        FOREACH aOrd AS STRING[] IN aList
+            LOCAL cPath := StructureRebuild.NtxPath( cDbf, (STRING) aOrd:GetValue( 0 ) ) AS STRING
+            IF File.Exists( cPath ) .AND. ! aFound:Contains( cPath )
+                aFound:Add( cPath )
+            ENDIF
+        NEXT
+        RETURN aFound
+
+    /// <summary>Ask what to do with NTX files that already exist. Yes = replace them, No = keep them and create only the
+    /// other orders, Cancel = do nothing. Returns FALSE on Cancel; lOverwrite tells the answer.</summary>
+    PUBLIC STATIC METHOD AskNtxOverwrite( cDbf AS STRING, aList AS List<STRING[]>, cTitle AS STRING, lOverwrite REF LOGIC ) AS LOGIC
+        LOCAL aExisting := StructureRebuild.ExistingNtxFiles( cDbf, aList ) AS List<STRING>
+        lOverwrite := TRUE
+        IF aExisting:Count == 0
+            RETURN TRUE
+        ENDIF
+        LOCAL aNames := List<STRING>{} AS List<STRING>
+        FOREACH cPath AS STRING IN aExisting
+            aNames:Add( Path.GetFileName( cPath ) )
+        NEXT
+        LOCAL cText := Convert.ToString( aExisting:Count ) + " index file(s) already exist:" + Environment.NewLine + Environment.NewLine + ;
+            String.Join( Environment.NewLine, aNames:ToArray() ) + Environment.NewLine + Environment.NewLine + ;
+            "Yes: replace them" + Environment.NewLine + ;
+            "No: keep them and create only the other orders" + Environment.NewLine + ;
+            "Cancel: do nothing" AS STRING
+        LOCAL oAnswer := MessageBox.Show( cText, cTitle, MessageBoxButtons.YesNoCancel, MessageBoxIcon.Question, MessageBoxDefaultButton.Button3 ) AS DialogResult
+        IF oAnswer == DialogResult.Cancel
+            RETURN FALSE
+        ENDIF
+        lOverwrite := ( oAnswer == DialogResult.Yes )
+        RETURN TRUE
+
+    /// <summary>Create the orders of aList (name, key, for, unique "1"/"0") as separate NTX files, in the CURRENT workarea.
+    /// All index files are closed first; existing files are replaced (lOverwrite) or kept. aKeepOpen = other index files
+    /// to open again afterwards. Returns one status per order: "" = created, "~text" = information (not an error),
+    /// anything else = error text.</summary>
+    PUBLIC STATIC METHOD CreateNtxOrders( cDbf AS STRING, aList AS List<STRING[]>, lOverwrite AS LOGIC, aKeepOpen AS List<STRING> ) AS List<STRING>
+        LOCAL aStatus := List<STRING>{} AS List<STRING>
+        LOCAL aReopen := List<STRING>{} AS List<STRING>
+        TRY
+            OrdSetFocus( 0 )
+            OrdListClear()
+        CATCH
+            NOP
+        END TRY
+        FOREACH aOrd AS STRING[] IN aList
+            LOCAL cName := (STRING) aOrd:GetValue( 0 ) AS STRING
+            LOCAL cPath := StructureRebuild.NtxPath( cDbf, cName ) AS STRING
+            IF File.Exists( cPath )
+                IF ! lOverwrite
+                    aStatus:Add( "~existing file kept" )
+                    aReopen:Add( cPath )
+                    LOOP
+                ENDIF
+                TRY
+                    File.Delete( cPath )
+                CATCH ex AS Exception
+                    aStatus:Add( "the existing file could not be replaced: " + ex:Message )
+                    LOOP
+                END TRY
+            ENDIF
+            LOCAL cError := StructureRebuild.CreateOrder( cPath, cName, (STRING) aOrd:GetValue( 1 ), (STRING) aOrd:GetValue( 2 ), ;
+                (STRING) aOrd:GetValue( 3 ) == "1" ) AS STRING
+            aStatus:Add( cError )
+            IF cError:Length == 0
+                aReopen:Add( cPath )
+            ENDIF
+        NEXT
+        // Creating an NTX order does not add it to the open orders (the new one replaces them): open them all again
+        FOREACH cBag AS STRING IN aKeepOpen
+            IF ! aReopen:Contains( cBag )
+                aReopen:Add( cBag )
+            ENDIF
+        NEXT
+        StructureRebuild.ReopenIndexFiles( aReopen )
+        RETURN aStatus
+
+    /// <summary>Close all index files of the CURRENT workarea and open the given ones (NTX files, in this order)</summary>
+    PUBLIC STATIC METHOD ReopenIndexFiles( aFiles AS List<STRING> ) AS VOID
+        TRY
+            OrdSetFocus( 0 )
+            OrdListClear()
+        CATCH
+            NOP
+        END TRY
+        FOREACH cBag AS STRING IN aFiles
+            TRY
+                OrdListAdd( cBag )
+            CATCH
+                NOP
+            END TRY
+        NEXT
+        RETURN
 
     PRIVATE STATIC METHOD DeleteFiles( cDbf AS STRING ) AS VOID
         FOREACH cExt AS STRING IN <STRING>{ Path.GetExtension( cDbf ), ".fpt", ".dbt", ".cdx" }
@@ -811,7 +937,64 @@ PUBLIC CLASS NewIndexDialog INHERIT System.Windows.Forms.Form
         ENDIF
         RETURN
 
+    /// <summary>NTX: every order becomes a file of its own; existing files are asked about (Yes / No / Cancel)</summary>
+    PRIVATE METHOD CreateNtx() AS VOID
+        LOCAL aList  := List<STRING[]>{} AS List<STRING[]>
+        LOCAL aItems := List<ListViewItem>{} AS List<ListViewItem>
+        FOREACH oItem AS ListViewItem IN SELF:lv:Items
+            IF oItem:Checked .AND. oItem:SubItems[4]:Text != "OK"
+                aList:Add( <STRING>{ oItem:Text, oItem:SubItems[1]:Text, oItem:SubItems[2]:Text, IIF( oItem:SubItems[3]:Text == "yes", "1", "0" ) } )
+                aItems:Add( oItem )
+            ENDIF
+        NEXT
+        IF aList:Count == 0
+            RETURN
+        ENDIF
+        LOCAL aStatus := List<STRING>{} AS List<STRING>
+        IF SELF:oWindow != NULL
+            // the window asks about existing files itself; an empty list means: cancelled
+            aStatus := SELF:oWindow:CreateAllOrders( aList )
+            IF aStatus:Count == 0
+                RETURN
+            ENDIF
+        ELSE
+            LOCAL lOverwrite := TRUE AS LOGIC
+            IF ! StructureRebuild.AskNtxOverwrite( SELF:cFile, aList, SELF:Text, REF lOverwrite )
+                RETURN
+            ENDIF
+            SELF:Cursor := Cursors.WaitCursor
+            TRY
+                IF ! DbUseArea( TRUE, SELF:cDriver, SELF:cFile, "INDEXNEW", FALSE, FALSE )
+                    MessageBox.Show( "The file could not be opened exclusively.", SELF:Text )
+                    RETURN
+                ENDIF
+                aStatus := StructureRebuild.CreateNtxOrders( SELF:cFile, aList, lOverwrite, List<STRING>{} )
+                DbCloseArea()
+            FINALLY
+                SELF:Cursor := Cursors.Default
+            END TRY
+        ENDIF
+        LOCAL nDone := 0 AS INT
+        LOCAL nFailed := 0 AS INT
+        FOR VAR i := 0 TO Math.Min( aStatus:Count, aItems:Count ) - 1
+            IF aStatus[i]:Length == 0
+                aItems[i]:SubItems[4]:Text := "OK"
+                nDone++
+            ELSEIF aStatus[i]:StartsWith( "~" )
+                aItems[i]:SubItems[4]:Text := aStatus[i]:Substring( 1 )
+            ELSE
+                aItems[i]:SubItems[4]:Text := "Error: " + aStatus[i]
+                nFailed++
+            ENDIF
+        NEXT
+        MessageBox.Show( Convert.ToString( nDone ) + " indexes created" + IIF( nFailed > 0, ", " + Convert.ToString( nFailed ) + " with errors (see column Status)", "" ) + ".", SELF:Text )
+        RETURN
+
     PRIVATE METHOD Create_Click( sender AS OBJECT, e AS EventArgs ) AS VOID
+        IF SELF:cDriver:ToUpper():Contains( "NTX" )
+            SELF:CreateNtx()
+            RETURN
+        ENDIF
         LOCAL cCdx    := Path.ChangeExtension( SELF:cFile, ".cdx" ) AS STRING
         LOCAL nSucceeded     := 0 AS INT
         LOCAL nError := 0 AS INT
