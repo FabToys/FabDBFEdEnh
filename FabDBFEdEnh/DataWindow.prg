@@ -1,4 +1,4 @@
-USING System
+﻿USING System
 USING System.IO
 USING System.Drawing
 USING System.Globalization
@@ -19,30 +19,30 @@ BEGIN NAMESPACE FabDBFEdEnh
 /// </summary>
 PUBLIC CLASS DataWindow INHERIT System.Windows.Forms.Form
 
-    // --- Workarea ---
-    PRIVATE oRdd      AS IRdd
-    PRIVATE nArea     AS DWORD
-    PRIVATE cFile    AS STRING
-    PRIVATE cDriver   AS STRING
-    PRIVATE cAlias    AS STRING
-    PRIVATE nFields   AS INT
-    PRIVATE aFieldName := List<STRING>{} AS List<STRING>      // Index 0 = field 1
-    PRIVATE aFieldType  := List<STRING>{} AS List<STRING>
-    PRIVATE aFieldDec  := List<INT>{}    AS List<INT>
-    PRIVATE aFieldAuto := List<LOGIC>{}  AS List<LOGIC>     // AutoIncrement and system fields: written by the RDD itself
-    PRIVATE aFieldBinary := List<LOGIC>{} AS List<LOGIC>    // binary fields (flag 4): binary memos open in the hex viewer
+    // --- The table: work area, field metadata and the view (record list, filter, scope). No UI in there. ---
+    PRIVATE oTable := DbfTable{} AS DbfTable
 
-    // --- Mode ---
-    PRIVATE lExclusive       AS LOGIC
-    PRIVATE lReadOnly       AS LOGIC
+    // The window reads the table state through these (kept under the old names)
+    PRIVATE PROPERTY oRdd        AS IRdd         GET SELF:oTable:Rdd
+    PRIVATE PROPERTY cFile       AS STRING       GET SELF:oTable:FileName
+    PRIVATE PROPERTY cDriver     AS STRING       GET SELF:oTable:Driver
+    PRIVATE PROPERTY nFields     AS INT          GET SELF:oTable:FieldCount
+    PRIVATE PROPERTY aFieldName  AS List<STRING> GET SELF:oTable:FieldName      // Index 0 = field 1
+    PRIVATE PROPERTY aFieldType  AS List<STRING> GET SELF:oTable:FieldType
+    PRIVATE PROPERTY aFieldDec   AS List<INT>    GET SELF:oTable:FieldDec
+    PRIVATE PROPERTY aFieldAuto  AS List<LOGIC>  GET SELF:oTable:FieldAuto     // AutoIncrement and system fields: written by the RDD itself
+    PRIVATE PROPERTY aFieldBinary AS List<LOGIC> GET SELF:oTable:FieldBinary   // binary fields (flag 4): binary memos open in the hex viewer
+    PRIVATE PROPERTY lExclusive  AS LOGIC        GET SELF:oTable:Exclusive
+    PRIVATE PROPERTY lReadOnly   AS LOGIC        GET SELF:oTable:ReadOnly
+    PRIVATE PROPERTY lShowDeleted AS LOGIC       GET SELF:oTable:ShowDeleted SET SELF:oTable:ShowDeleted := VALUE
+    PRIVATE PROPERTY lOnlyDeleted AS LOGIC       GET SELF:oTable:OnlyDeleted SET SELF:oTable:OnlyDeleted := VALUE
+    PRIVATE PROPERTY lAutoCommit  AS LOGIC       GET SELF:oTable:AutoCommit  SET SELF:oTable:AutoCommit := VALUE
+    // Record list in display order (active index, filter Deleted)
+    PRIVATE PROPERTY aRecs       AS List<LONG>   GET SELF:oTable:Recs
+
+    // --- Mode (display only) ---
     PRIVATE lShowRecno     AS LOGIC
-    PRIVATE lShowDeleted AS LOGIC
-    PRIVATE lOnlyDeleted  AS LOGIC
-    PRIVATE lAutoCommit     AS LOGIC
     PRIVATE lFullPath     AS LOGIC
-
-    // --- Record list in display order (active index, filter Deleted) ---
-    PRIVATE aRecs := List<LONG>{} AS List<LONG>
 
     // --- Cache of the record read last ---
     PRIVATE nCacheRec := 0 AS LONG
@@ -63,13 +63,13 @@ PUBLIC CLASS DataWindow INHERIT System.Windows.Forms.Form
     // --- Controls ---
     PRIVATE grid      AS DbGrid
     PRIVATE cKeyExpression := "" AS STRING
-    // Filter / scope (own evaluation when building the record list)
-    PRIVATE oFilterCb   := NULL AS OBJECT
-    PRIVATE cFilterText := "" AS STRING
-    PRIVATE cScopeFrom   := "" AS STRING
-    PRIVATE cScopeTo   := "" AS STRING
-    PRIVATE oScopeFrom   := NULL AS OBJECT
-    PRIVATE oScopeTo   := NULL AS OBJECT
+    // Filter / scope (own evaluation when building the record list; stored in the table)
+    PRIVATE PROPERTY oFilterCb   AS OBJECT GET SELF:oTable:FilterCb   SET SELF:oTable:FilterCb := VALUE
+    PRIVATE PROPERTY cFilterText AS STRING GET SELF:oTable:FilterText SET SELF:oTable:FilterText := VALUE
+    PRIVATE PROPERTY cScopeFrom  AS STRING GET SELF:oTable:ScopeFromText SET SELF:oTable:ScopeFromText := VALUE
+    PRIVATE PROPERTY cScopeTo    AS STRING GET SELF:oTable:ScopeToText   SET SELF:oTable:ScopeToText := VALUE
+    PRIVATE PROPERTY oScopeFrom  AS OBJECT GET SELF:oTable:ScopeFrom  SET SELF:oTable:ScopeFrom := VALUE
+    PRIVATE PROPERTY oScopeTo    AS OBJECT GET SELF:oTable:ScopeTo    SET SELF:oTable:ScopeTo := VALUE
     // Form view
     PRIVATE pnlFormView     AS Panel
     PRIVATE aFormBox    := List<TextBox>{} AS List<TextBox>
@@ -81,8 +81,6 @@ PUBLIC CLASS DataWindow INHERIT System.Windows.Forms.Form
     PRIVATE cmbSearch AS ToolStripComboBox
     PRIVATE cmbOrder  AS ToolStripComboBox
     PRIVATE lOrderLoad := FALSE AS LOGIC
-
-    PRIVATE STATIC nAliasCounter := 0 AS INT
 
     PUBLIC PROPERTY FileName AS STRING GET SELF:cFile
     PUBLIC PROPERTY Driver   AS STRING GET SELF:cDriver
@@ -223,50 +221,16 @@ PUBLIC CLASS DataWindow INHERIT System.Windows.Forms.Form
     // =====================================================================
     PUBLIC METHOD OpenFile( cFile AS STRING, cRdd AS STRING, lExcl AS LOGIC, lReadOnly AS LOGIC, ;
                            lRecno AS LOGIC, lDeleted AS LOGIC, lAuto AS LOGIC, lPath AS LOGIC ) AS LOGIC
-        LOCAL oResult := NULL AS OBJECT
-        SELF:cFile           := cFile
-        SELF:cDriver          := cRdd
-        SELF:lExclusive        := lExcl
-        SELF:lReadOnly        := lReadOnly
+        LOCAL cError := "" AS STRING
         SELF:lShowRecno      := lRecno
         SELF:lShowDeleted := lDeleted
         SELF:lAutoCommit      := lAuto
         SELF:lFullPath      := lPath
+        IF ! SELF:oTable:Open( cFile, cRdd, lExcl, lReadOnly, REF cError )
+            MessageBox.Show( cError, "Open", MessageBoxButtons.OK, MessageBoxIcon.Error )
+            RETURN FALSE
+        ENDIF
         TRY
-            // build a valid, unique alias
-            nAliasCounter++
-            SELF:cAlias := Regex.Replace( Path.GetFileNameWithoutExtension( cFile ):ToUpper(), "[^A-Z0-9_]", "_" )
-            IF SELF:cAlias:Length == 0 .OR. Char.IsDigit( SELF:cAlias[0] )
-                SELF:cAlias := "A_" + SELF:cAlias
-            ENDIF
-            SELF:cAlias := SELF:cAlias + "_" + Convert.ToString( nAliasCounter )
-
-            IF ! DbUseArea( TRUE, cRdd, cFile, SELF:cAlias, ! lExcl, lReadOnly )
-                MessageBox.Show( "The file could not be opened:" + Environment.NewLine + cFile, "Open", MessageBoxButtons.OK, MessageBoxIcon.Error )
-                RETURN FALSE
-            ENDIF
-            IF ! CoreDb.Info( DBI_RDD_OBJECT, REF oResult )
-                DbCloseArea()
-                RETURN FALSE
-            ENDIF
-            SELF:oRdd  := (IRdd) oResult
-            SELF:nArea := (DWORD) SELF:oRdd:Area
-
-            // Fields
-            SELF:nFields := SELF:oRdd:FieldCount
-            FOR VAR i := 1 TO SELF:nFields
-                SELF:aFieldName:Add( SELF:oRdd:FieldName( i ):ToUpper() )
-                SELF:aFieldType:Add( ((STRING) SELF:oRdd:FieldInfo( i, DBS_TYPE, NULL )):ToUpper():Substring( 0, 1 ) )
-                SELF:aFieldDec:Add( (INT) (LONG) SELF:oRdd:FieldInfo( i, DBS_DEC, NULL ) )
-                LOCAL nFlags := 0 AS INT
-                TRY
-                    nFlags := Convert.ToInt32( SELF:oRdd:FieldInfo( i, DBS_FLAGS, NULL ) )
-                CATCH
-                    nFlags := 0
-                END TRY
-                SELF:aFieldAuto:Add( ( nFlags & 9 ) != 0 )          // 1 = System, 8 = AutoIncrement
-                SELF:aFieldBinary:Add( ( nFlags & 4 ) != 0 )        // 4 = Binary
-            NEXT
             SELF:BuildColumns()
             SELF:LoadOrders()
             SELF:LoadList( 0 )
@@ -278,24 +242,12 @@ PUBLIC CLASS DataWindow INHERIT System.Windows.Forms.Form
         END TRY
 
     PRIVATE METHOD Window_Closed( sender AS OBJECT, e AS FormClosedEventArgs ) AS VOID
-        TRY
-            IF SELF:oRdd != NULL
-                SELF:Sel()
-                IF ! SELF:lReadOnly
-                    DbCommit()
-                    DbUnlock()
-                ENDIF
-                DbCloseArea()
-                SELF:oRdd := NULL
-            ENDIF
-        CATCH
-            NOP
-        END TRY
+        SELF:oTable:Close()
         RETURN
 
     // make this workarea the current one (before every RDD call!)
     PRIVATE METHOD Sel() AS VOID
-        DbSelectArea( SELF:nArea )
+        SELF:oTable:Sel()
         RETURN
 
     PUBLIC METHOD SetTitle() AS VOID
@@ -358,57 +310,9 @@ PUBLIC CLASS DataWindow INHERIT System.Windows.Forms.Form
 
     /// <summary>Read the record numbers in the order of the active index and position on nRecTarget</summary>
     PUBLIC METHOD LoadList( nRecTarget AS LONG ) AS VOID
-        LOCAL lDel AS LOGIC
-        SELF:Sel()
-        // write the open record buffer and set the active order again (read the index positions afresh)
-        TRY
-            IF ! SELF:lReadOnly
-                DbCommit()
-            ENDIF
-            IF SELF:cmbOrder:SelectedIndex > 0
-                OrdSetFocus( (STRING) SELF:cmbOrder:SelectedItem )
-            ENDIF
-        CATCH
-            NOP
-        END TRY
-        SELF:aRecs:Clear()
-        DbGoTop()
-        LOCAL lScope := SELF:cmbOrder:SelectedIndex > 0 .AND. ( SELF:oScopeFrom != NULL .OR. SELF:oScopeTo != NULL ) AS LOGIC
-        // Protection against an endless loop with a corrupt index: more steps than records -> abort
-        LOCAL nMax      := (LONG) LastRec() + 10 AS LONG
-        LOCAL nSteps := 0 AS LONG
-        LOCAL lCorrupt   := FALSE AS LOGIC
-        DO WHILE ! Eof()
-            nSteps++
-            IF nSteps > nMax
-                lCorrupt := TRUE
-                EXIT
-            ENDIF
-            LOCAL lOk := TRUE AS LOGIC
-            lDel := Deleted()
-            IF SELF:lOnlyDeleted
-                lOk := lDel
-            ELSEIF ! SELF:lShowDeleted
-                lOk := ! lDel
-            ENDIF
-            IF lOk .AND. lScope
-                LOCAL nCmp := SELF:CompareScope() AS INT
-                // no early EXIT: the index sort order (collation) can differ from the text comparison
-                lOk := nCmp == 0
-            ENDIF
-            IF lOk .AND. SELF:oFilterCb != NULL
-                TRY
-                    lOk := (LOGIC) Eval( SELF:oFilterCb )
-                CATCH
-                    lOk := FALSE
-                END TRY
-            ENDIF
-            IF lOk
-                SELF:aRecs:Add( (LONG) RecNo() )
-            ENDIF
-            DbSkip( 1 )
-        ENDDO
-        IF lCorrupt
+        SELF:SyncOrder()
+        SELF:oTable:LoadList()
+        IF SELF:oTable:Corrupt
             MessageBox.Show( "The active index seems to be corrupt (it loops)." + Environment.NewLine + ;
                 "Only the first " + Convert.ToString( SELF:aRecs:Count ) + " records are shown." + Environment.NewLine + Environment.NewLine + ;
                 "Please open the file exclusively and run Index - ReIndex.", "Index corrupt", MessageBoxButtons.OK, MessageBoxIcon.Warning )
@@ -743,23 +647,19 @@ PUBLIC CLASS DataWindow INHERIT System.Windows.Forms.Form
 
     // Record lock in shared mode
     PRIVATE METHOD LockRecord( nRec AS LONG ) AS LOGIC
-        IF SELF:lExclusive
+        IF SELF:oTable:TryLock( nRec )
             RETURN TRUE
         ENDIF
-        IF DbRLock( nRec )
-            RETURN TRUE
-        ENDIF
-        MessageBox.Show( "Record " + Convert.ToString( nRec ) + " is locked by another user.", "Lock", MessageBoxButtons.OK, MessageBoxIcon.Warning )
+        SELF:LockedMessage( nRec )
         RETURN FALSE
+
+    PRIVATE METHOD LockedMessage( nRec AS LONG ) AS VOID
+        MessageBox.Show( "Record " + Convert.ToString( nRec ) + " is locked by another user.", "Lock", MessageBoxButtons.OK, MessageBoxIcon.Warning )
+        RETURN
 
     // after writing: auto commit and release the lock
     PRIVATE METHOD AfterWrite() AS VOID
-        IF SELF:lAutoCommit
-            DbCommit()
-            IF ! SELF:lExclusive
-                DbUnlock()
-            ENDIF
-        ENDIF
+        SELF:oTable:AfterWrite()
         RETURN
 
     PRIVATE METHOD Grid_CellDoubleClick( sender AS OBJECT, e AS DataGridViewCellEventArgs ) AS VOID
@@ -1147,21 +1047,14 @@ PUBLIC CLASS DataWindow INHERIT System.Windows.Forms.Form
         IF nRec == 0
             RETURN
         ENDIF
-        TRY
-            SELF:Sel()
-            DbGoto( nRec )
-            IF ! SELF:LockRecord( nRec )
-                RETURN
-            ENDIF
-            IF lDelete
-                DbDelete()
-            ELSE
-                DbRecall()
-            ENDIF
-            SELF:AfterWrite()
-        CATCH ex AS Exception
-            MessageBox.Show( ex:Message, "Delete/Recall" )
-        END TRY
+        LOCAL oResult := SELF:oTable:SetDeleted( nRec, lDelete ) AS DbfResult
+        IF oResult:Locked > 0
+            SELF:LockedMessage( nRec )
+            RETURN
+        ENDIF
+        IF oResult:Failed
+            MessageBox.Show( oResult:Error, "Delete/Recall" )
+        ENDIF
         SELF:ClearCache()
         // if the record no longer fits the view, rebuild the list
         IF ( lDelete .AND. ! SELF:lShowDeleted ) .OR. ( ! lDelete .AND. SELF:lOnlyDeleted )
@@ -1180,9 +1073,7 @@ PUBLIC CLASS DataWindow INHERIT System.Windows.Forms.Form
         IF SELF:ReadOnlyMessage()
             RETURN
         ENDIF
-        // snapshot: the list changes while records disappear from the view
-        LOCAL aTodo := List<LONG>{ SELF:aRecs } AS List<LONG>
-        IF aTodo:Count == 0
+        IF SELF:aRecs:Count == 0
             MessageBox.Show( "There are no records in the current view.", "Scoped Delete" )
             RETURN
         ENDIF
@@ -1190,36 +1081,18 @@ PUBLIC CLASS DataWindow INHERIT System.Windows.Forms.Form
         IF SELF:oFilterCb != NULL .OR. SELF:oScopeFrom != NULL .OR. SELF:oScopeTo != NULL
             cInfo := " (filter / scope active)"
         ENDIF
-        IF MessageBox.Show( Convert.ToString( aTodo:Count ) + " record(s) of the current view" + cInfo + " will be deleted. Continue?", ;
+        IF MessageBox.Show( Convert.ToString( SELF:aRecs:Count ) + " record(s) of the current view" + cInfo + " will be deleted. Continue?", ;
             "Scoped Delete", MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2 ) != DialogResult.Yes
             RETURN
         ENDIF
-        LOCAL nNum := 0, nLocked := 0 AS INT
         LOCAL nRec := SELF:CurrentRec() AS LONG
-        TRY
-            SELF:Sel()
-            FOREACH nR AS LONG IN aTodo
-                DbGoto( nR )
-                IF Deleted()
-                    LOOP
-                ENDIF
-                IF SELF:lExclusive .OR. DbRLock( nR )
-                    DbDelete()
-                    nNum++
-                ELSE
-                    nLocked++
-                ENDIF
-            NEXT
-            DbCommit()
-            IF ! SELF:lExclusive
-                DbUnlock()
-            ENDIF
-        CATCH ex AS Exception
-            MessageBox.Show( ex:Message, "Scoped Delete" )
-        END TRY
+        LOCAL oResult := SELF:oTable:DeleteView() AS DbfResult
+        IF oResult:Failed
+            MessageBox.Show( oResult:Error, "Scoped Delete" )
+        ENDIF
         SELF:LoadList( nRec )
-        MessageBox.Show( Convert.ToString( nNum ) + " records deleted." + ;
-            IIF( nLocked > 0, Environment.NewLine + Convert.ToString( nLocked ) + " locked, not processed.", "" ), "Scoped Delete" )
+        MessageBox.Show( Convert.ToString( oResult:Done ) + " records deleted." + ;
+            IIF( oResult:Locked > 0, Environment.NewLine + Convert.ToString( oResult:Locked ) + " locked, not processed.", "" ), "Scoped Delete" )
         RETURN
 
     /// <summary>Copy the current record to the DBClipboard, then delete it</summary>
@@ -1238,46 +1111,27 @@ PUBLIC CLASS DataWindow INHERIT System.Windows.Forms.Form
         IF MessageBox.Show( "Recall all deleted records?", "Recall All", MessageBoxButtons.YesNo, MessageBoxIcon.Question ) != DialogResult.Yes
             RETURN
         ENDIF
-        LOCAL nNum := 0, nLocked := 0 AS INT
         LOCAL nRec := SELF:CurrentRec() AS LONG
-        TRY
-            SELF:Sel()
-            LOCAL nMax := (LONG) LastRec() + 10 AS LONG
-            SELF:NaturalOrder()
-            DbGoTop()
-            DO WHILE ! Eof() .AND. nMax > 0
-                nMax--
-                IF Deleted()
-                    IF SELF:lExclusive .OR. DbRLock( RecNo() )
-                        DbRecall()
-                        nNum++
-                    ELSE
-                        nLocked++
-                    ENDIF
-                ENDIF
-                DbSkip( 1 )
-            ENDDO
-            SELF:RestoreOrder()
-            DbCommit()
-            IF ! SELF:lExclusive
-                DbUnlock()
-            ENDIF
-        CATCH ex AS Exception
-            MessageBox.Show( ex:Message, "Recall All" )
-        END TRY
+        SELF:SyncOrder()
+        LOCAL oResult := SELF:oTable:RecallAll() AS DbfResult
+        IF oResult:Failed
+            MessageBox.Show( oResult:Error, "Recall All" )
+        ENDIF
         SELF:LoadList( nRec )
-        MessageBox.Show( Convert.ToString( nNum ) + " records recalled." + ;
-            IIF( nLocked > 0, Environment.NewLine + Convert.ToString( nLocked ) + " locked, not processed.", "" ), "Recall All" )
+        MessageBox.Show( Convert.ToString( oResult:Done ) + " records recalled." + ;
+            IIF( oResult:Locked > 0, Environment.NewLine + Convert.ToString( oResult:Locked ) + " locked, not processed.", "" ), "Recall All" )
         RETURN
 
     PUBLIC METHOD Commit() AS VOID
-        IF SELF:lReadOnly
-            RETURN
-        ENDIF
-        SELF:Sel()
-        DbCommit()
-        IF ! SELF:lExclusive
-            DbUnlock()
+        SELF:oTable:Commit()
+        RETURN
+
+    // the table needs to know which order the combo box shows
+    PRIVATE METHOD SyncOrder() AS VOID
+        IF SELF:cmbOrder:SelectedIndex > 0
+            SELF:oTable:ActiveOrder := (STRING) SELF:cmbOrder:SelectedItem
+        ELSE
+            SELF:oTable:ActiveOrder := ""
         ENDIF
         RETURN
 
@@ -1786,8 +1640,8 @@ PUBLIC CLASS DataWindow INHERIT System.Windows.Forms.Form
             RETURN FALSE
         ENDIF
         TRY
-            SELF:oScopeFrom := SELF:ScopeValue( cFrom )
-            SELF:oScopeTo := SELF:ScopeValue( cTo )
+            SELF:oScopeFrom := SELF:oTable:ScopeValue( cFrom )
+            SELF:oScopeTo := SELF:oTable:ScopeValue( cTo )
             SELF:cScopeFrom := cFrom
             SELF:cScopeTo := cTo
         CATCH ex AS Exception
@@ -1796,70 +1650,6 @@ PUBLIC CLASS DataWindow INHERIT System.Windows.Forms.Form
         END TRY
         SELF:LoadList( nRec )
         RETURN TRUE
-
-    // Convert the scope text to match the type of the index key
-    PRIVATE METHOD ScopeValue( cText AS STRING ) AS OBJECT
-        IF cText:Length == 0
-            RETURN NULL
-        ENDIF
-        LOCAL oPattern := NULL AS OBJECT
-        SELF:Sel()
-        DbGoTop()
-        IF ! Eof()
-            oPattern := OrdKeyVal()
-        ENDIF
-        IF oPattern IS STRING .OR. oPattern == NULL
-            RETURN cText
-        ENDIF
-        IF oPattern IS IDate .OR. oPattern IS DateTime
-            RETURN AppSettings.ParseDate( cText )
-        ENDIF
-        RETURN Double.Parse( cText:Replace( "'", "" ):Replace( ",", "." ), CultureInfo.InvariantCulture )
-
-    // Compare the current key with the scope: -1 = before "from", 0 = inside, 1 = after "to"
-    PRIVATE METHOD CompareScope() AS INT
-        LOCAL oKey := NULL AS OBJECT
-        TRY
-            oKey := OrdKeyVal()
-        CATCH
-            RETURN 0
-        END TRY
-        IF SELF:oScopeFrom != NULL .AND. SELF:CompareValue( oKey, SELF:oScopeFrom ) < 0
-            RETURN -1
-        ENDIF
-        IF SELF:oScopeTo != NULL .AND. SELF:CompareValue( oKey, SELF:oScopeTo ) > 0
-            RETURN 1
-        ENDIF
-        RETURN 0
-
-    // Character: compare only over the length of the scope value (like Clipper/VO)
-    PRIVATE METHOD CompareValue( oKey AS OBJECT, oLimit AS OBJECT ) AS INT
-        IF oKey == NULL
-            RETURN 0
-        ENDIF
-        IF oLimit IS STRING
-            LOCAL cLimit := (STRING) oLimit AS STRING
-            LOCAL cKey    := oKey:ToString() AS STRING
-            IF cKey:Length > cLimit:Length
-                cKey := cKey:Substring( 0, cLimit:Length )
-            ENDIF
-            // case-insensitive, accented characters sorted like the Windows sort order
-            RETURN Math.Sign( String.Compare( cKey, cLimit, StringComparison.CurrentCultureIgnoreCase ) )
-        ENDIF
-        IF oLimit IS DateTime
-            LOCAL dKey AS DateTime
-            IF oKey IS IDate
-                LOCAL oDate := (IDate) oKey AS IDate
-                IF oDate:IsEmpty
-                    RETURN -1
-                ENDIF
-                dKey := DateTime{ oDate:Year, oDate:Month, oDate:Day }
-            ELSE
-                dKey := Convert.ToDateTime( oKey )
-            ENDIF
-            RETURN Math.Sign( DateTime.Compare( dKey, (DateTime) oLimit ) )
-        ENDIF
-        RETURN Math.Sign( Convert.ToDouble( oKey ):CompareTo( Convert.ToDouble( oLimit ) ) )
 
     // =====================================================================
     // Index management (Index Manager)
@@ -2183,40 +1973,9 @@ PUBLIC CLASS DataWindow INHERIT System.Windows.Forms.Form
     // Stage 3: Pack, Zap, DBReplace, FPT analysis
     // =====================================================================
     // Natural order: with an active order (with FOR condition) records that are not in the index would be missing
-    PRIVATE METHOD NaturalOrder() AS VOID
-        TRY
-            SELF:Sel()
-            OrdSetFocus( 0 )
-        CATCH
-            NOP
-        END TRY
-        RETURN
-
-    PRIVATE METHOD RestoreOrder() AS VOID
-        TRY
-            IF SELF:cmbOrder:SelectedIndex > 0
-                SELF:Sel()
-                OrdSetFocus( (STRING) SELF:cmbOrder:SelectedItem )
-            ENDIF
-        CATCH
-            NOP
-        END TRY
-        RETURN
-
     PUBLIC METHOD CountDeleted() AS INT
-        LOCAL nDelCount := 0 AS INT
-        LOCAL nMax := (LONG) LastRec() + 10 AS LONG
-        SELF:NaturalOrder()
-        DbGoTop()
-        DO WHILE ! Eof() .AND. nMax > 0
-            nMax--
-            IF Deleted()
-                nDelCount++
-            ENDIF
-            DbSkip( 1 )
-        ENDDO
-        SELF:RestoreOrder()
-        RETURN nDelCount
+        SELF:SyncOrder()
+        RETURN SELF:oTable:CountDeleted()
 
     PUBLIC METHOD Zap() AS VOID
         IF SELF:ExclusiveRequired( "Zap" )

@@ -99,6 +99,7 @@
     <Compile Include="AppSettings.prg" />
     <Compile Include="AssemblyInfo.prg" />
     <Compile Include="DataWindow.prg" />
+    <Compile Include="DbfTable.prg" />
     <Compile Include="DBFStructWindow.Designer.prg">
       <DependentUpon>DBFStructWindow.prg</DependentUpon>
     </Compile>

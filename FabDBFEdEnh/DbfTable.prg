@@ -1,0 +1,445 @@
+USING System
+USING System.IO
+USING System.Globalization
+USING System.Collections.Generic
+USING System.Text
+USING XSharp
+USING XSharp.RDD
+USING XSharp.RDD.Support
+
+BEGIN NAMESPACE FabDBFEdEnh
+
+/// <summary>Outcome of a table operation. No dialogs here: the caller decides what to tell the user.</summary>
+PUBLIC CLASS DbfResult
+    /// <summary>Records processed</summary>
+    PUBLIC Done   := 0 AS INT
+    /// <summary>Records skipped because another user holds the lock</summary>
+    PUBLIC Locked := 0 AS INT
+    /// <summary>First record number that could not be locked (0 = none)</summary>
+    PUBLIC LockedRec := 0 AS LONG
+    /// <summary>Exception text, empty = no error</summary>
+    PUBLIC Error  := "" AS STRING
+    PUBLIC PROPERTY Failed AS LOGIC GET SELF:Error:Length > 0
+END CLASS
+
+/// <summary>A DBF opened in its own work area, together with the "view" on it: active order, deleted flag handling,
+/// filter and scope. Contains no user interface code, so it can be tested without a window.</summary>
+PUBLIC CLASS DbfTable
+    PRIVATE STATIC nAliasCounter := 0 AS INT
+
+    // --- Work area ---
+    PRIVATE oRdd AS IRdd
+    PRIVATE nArea AS DWORD
+    PRIVATE aName   := List<STRING>{} AS List<STRING>      // index 0 = field 1
+    PRIVATE aType   := List<STRING>{} AS List<STRING>
+    PRIVATE aDec    := List<INT>{}    AS List<INT>
+    PRIVATE aAuto   := List<LOGIC>{}  AS List<LOGIC>       // AutoIncrement and system fields: written by the RDD itself
+    PRIVATE aBinary := List<LOGIC>{}  AS List<LOGIC>       // binary fields (flag 4)
+
+    PUBLIC PROPERTY Rdd       AS IRdd   GET SELF:oRdd
+    PUBLIC PROPERTY Area      AS DWORD  GET SELF:nArea
+    PUBLIC PROPERTY Alias     AS STRING AUTO GET PRIVATE SET
+    PUBLIC PROPERTY FileName  AS STRING AUTO GET PRIVATE SET
+    PUBLIC PROPERTY Driver    AS STRING AUTO GET PRIVATE SET
+    PUBLIC PROPERTY Exclusive AS LOGIC  AUTO GET PRIVATE SET
+    PUBLIC PROPERTY ReadOnly  AS LOGIC  AUTO GET PRIVATE SET
+    PUBLIC PROPERTY IsOpen    AS LOGIC  GET SELF:oRdd != NULL
+    PUBLIC PROPERTY FieldCount AS INT   GET SELF:aName:Count
+    PUBLIC PROPERTY FieldName   AS List<STRING> GET SELF:aName
+    PUBLIC PROPERTY FieldType   AS List<STRING> GET SELF:aType
+    PUBLIC PROPERTY FieldDec    AS List<INT>    GET SELF:aDec
+    PUBLIC PROPERTY FieldAuto   AS List<LOGIC>  GET SELF:aAuto
+    PUBLIC PROPERTY FieldBinary AS List<LOGIC>  GET SELF:aBinary
+
+    // --- View ---
+    /// <summary>Record numbers in display order (active order, deleted flag, scope, filter)</summary>
+    PUBLIC PROPERTY Recs AS List<LONG> AUTO := List<LONG>{}
+    PUBLIC PROPERTY ShowDeleted AS LOGIC AUTO
+    PUBLIC PROPERTY OnlyDeleted AS LOGIC AUTO
+    /// <summary>Name of the active order, "" = natural order</summary>
+    PUBLIC PROPERTY ActiveOrder AS STRING AUTO := ""
+    /// <summary>Compiled filter (macro code block), NULL = no filter</summary>
+    PUBLIC PROPERTY FilterCb   AS OBJECT AUTO
+    PUBLIC PROPERTY FilterText AS STRING AUTO := ""
+    PUBLIC PROPERTY ScopeFrom     AS OBJECT AUTO
+    PUBLIC PROPERTY ScopeTo       AS OBJECT AUTO
+    PUBLIC PROPERTY ScopeFromText AS STRING AUTO := ""
+    PUBLIC PROPERTY ScopeToText   AS STRING AUTO := ""
+    /// <summary>TRUE = commit and unlock after each write</summary>
+    PUBLIC PROPERTY AutoCommit AS LOGIC AUTO
+    /// <summary>The last LoadList stopped because the active index seems to loop</summary>
+    PUBLIC PROPERTY Corrupt AS LOGIC AUTO
+
+    // =====================================================================
+    // Open / close
+    // =====================================================================
+    /// <summary>Open the file in a new work area. Returns FALSE and the reason in cError when it fails.</summary>
+    PUBLIC METHOD Open( cFile AS STRING, cRdd AS STRING, lExcl AS LOGIC, lReadOnly AS LOGIC, cError REF STRING ) AS LOGIC
+        LOCAL oResult := NULL AS OBJECT
+        cError := ""
+        SELF:FileName  := cFile
+        SELF:Driver    := cRdd
+        SELF:Exclusive := lExcl
+        SELF:ReadOnly  := lReadOnly
+        TRY
+            nAliasCounter++
+            SELF:Alias := DbfTable.MakeAlias( cFile ) + "_" + Convert.ToString( nAliasCounter )
+            IF ! DbUseArea( TRUE, cRdd, cFile, SELF:Alias, ! lExcl, lReadOnly )
+                cError := "The file could not be opened:" + Environment.NewLine + cFile
+                RETURN FALSE
+            ENDIF
+            IF ! CoreDb.Info( DBI_RDD_OBJECT, REF oResult )
+                DbCloseArea()
+                cError := "The file could not be opened:" + Environment.NewLine + cFile
+                RETURN FALSE
+            ENDIF
+            SELF:oRdd  := (IRdd) oResult
+            SELF:nArea := (DWORD) SELF:oRdd:Area
+            SELF:ReadFields()
+            RETURN TRUE
+        CATCH ex AS Exception
+            cError := ex:Message
+            RETURN FALSE
+        END TRY
+
+    /// <summary>Alias from the file name: upper case A-Z, 0-9 and "_"; never starts with a digit</summary>
+    PUBLIC STATIC METHOD MakeAlias( cFile AS STRING ) AS STRING
+        LOCAL cName := Path.GetFileNameWithoutExtension( cFile ):ToUpper() AS STRING
+        LOCAL oText := StringBuilder{} AS StringBuilder
+        FOREACH c AS CHAR IN cName
+            IF ( c >= 'A' .AND. c <= 'Z' ) .OR. ( c >= '0' .AND. c <= '9' ) .OR. c == '_'
+                oText:Append( c )
+            ELSE
+                oText:Append( '_' )
+            ENDIF
+        NEXT
+        LOCAL cAlias := oText:ToString() AS STRING
+        IF cAlias:Length == 0 .OR. Char.IsDigit( cAlias[0] )
+            cAlias := "A_" + cAlias
+        ENDIF
+        RETURN cAlias
+
+    PRIVATE METHOD ReadFields() AS VOID
+        SELF:aName:Clear()
+        SELF:aType:Clear()
+        SELF:aDec:Clear()
+        SELF:aAuto:Clear()
+        SELF:aBinary:Clear()
+        FOR VAR i := 1 TO SELF:oRdd:FieldCount
+            SELF:aName:Add( SELF:oRdd:FieldName( i ):ToUpper() )
+            SELF:aType:Add( ((STRING) SELF:oRdd:FieldInfo( i, DBS_TYPE, NULL )):ToUpper():Substring( 0, 1 ) )
+            SELF:aDec:Add( (INT) (LONG) SELF:oRdd:FieldInfo( i, DBS_DEC, NULL ) )
+            LOCAL nFlags := 0 AS INT
+            TRY
+                nFlags := Convert.ToInt32( SELF:oRdd:FieldInfo( i, DBS_FLAGS, NULL ) )
+            CATCH
+                nFlags := 0
+            END TRY
+            SELF:aAuto:Add( ( nFlags & 9 ) != 0 )          // 1 = System, 8 = AutoIncrement
+            SELF:aBinary:Add( ( nFlags & 4 ) != 0 )        // 4 = Binary
+        NEXT
+        RETURN
+
+    /// <summary>Write pending changes and close the work area</summary>
+    PUBLIC METHOD Close() AS VOID
+        TRY
+            IF SELF:oRdd != NULL
+                SELF:Sel()
+                IF ! SELF:ReadOnly
+                    DbCommit()
+                    DbUnlock()
+                ENDIF
+                DbCloseArea()
+                SELF:oRdd := NULL
+            ENDIF
+        CATCH
+            NOP
+        END TRY
+        RETURN
+
+    /// <summary>Make this work area the current one (before every RDD call!)</summary>
+    PUBLIC METHOD Sel() AS VOID
+        DbSelectArea( SELF:nArea )
+        RETURN
+
+    // =====================================================================
+    // Locking / writing helpers
+    // =====================================================================
+    /// <summary>Record lock in shared mode (always TRUE when the file is open exclusive)</summary>
+    PUBLIC METHOD TryLock( nRec AS LONG ) AS LOGIC
+        IF SELF:Exclusive
+            RETURN TRUE
+        ENDIF
+        SELF:Sel()
+        RETURN DbRLock( nRec )
+
+    /// <summary>After writing: auto commit and release the lock</summary>
+    PUBLIC METHOD AfterWrite() AS VOID
+        IF SELF:AutoCommit
+            DbCommit()
+            IF ! SELF:Exclusive
+                DbUnlock()
+            ENDIF
+        ENDIF
+        RETURN
+
+    /// <summary>Commit and release the lock</summary>
+    PUBLIC METHOD Commit() AS VOID
+        IF SELF:ReadOnly
+            RETURN
+        ENDIF
+        SELF:Sel()
+        DbCommit()
+        IF ! SELF:Exclusive
+            DbUnlock()
+        ENDIF
+        RETURN
+
+    // =====================================================================
+    // Order helpers
+    // =====================================================================
+    PUBLIC METHOD NaturalOrder() AS VOID
+        TRY
+            SELF:Sel()
+            OrdSetFocus( 0 )
+        CATCH
+            NOP
+        END TRY
+        RETURN
+
+    PUBLIC METHOD RestoreOrder() AS VOID
+        TRY
+            IF SELF:ActiveOrder:Length > 0
+                SELF:Sel()
+                OrdSetFocus( SELF:ActiveOrder )
+            ENDIF
+        CATCH
+            NOP
+        END TRY
+        RETURN
+
+    // =====================================================================
+    // The view: record list
+    // =====================================================================
+    /// <summary>Read the record numbers in the order of the active index into Recs, applying the deleted flag
+    /// handling, the scope and the filter</summary>
+    PUBLIC METHOD LoadList() AS VOID
+        LOCAL lDel AS LOGIC
+        SELF:Sel()
+        // write the open record buffer and set the active order again (read the index positions afresh)
+        TRY
+            IF ! SELF:ReadOnly
+                DbCommit()
+            ENDIF
+            IF SELF:ActiveOrder:Length > 0
+                OrdSetFocus( SELF:ActiveOrder )
+            ENDIF
+        CATCH
+            NOP
+        END TRY
+        SELF:Recs:Clear()
+        SELF:Corrupt := FALSE
+        DbGoTop()
+        LOCAL lScope := SELF:ActiveOrder:Length > 0 .AND. ( SELF:ScopeFrom != NULL .OR. SELF:ScopeTo != NULL ) AS LOGIC
+        // Protection against an endless loop with a corrupt index: more steps than records -> abort
+        LOCAL nMax   := (LONG) LastRec() + 10 AS LONG
+        LOCAL nSteps := 0 AS LONG
+        DO WHILE ! Eof()
+            nSteps++
+            IF nSteps > nMax
+                SELF:Corrupt := TRUE
+                EXIT
+            ENDIF
+            LOCAL lOk := TRUE AS LOGIC
+            lDel := Deleted()
+            IF SELF:OnlyDeleted
+                lOk := lDel
+            ELSEIF ! SELF:ShowDeleted
+                lOk := ! lDel
+            ENDIF
+            IF lOk .AND. lScope
+                // no early EXIT: the index sort order (collation) can differ from the text comparison
+                lOk := SELF:CompareScope() == 0
+            ENDIF
+            IF lOk .AND. SELF:FilterCb != NULL
+                TRY
+                    lOk := (LOGIC) Eval( SELF:FilterCb )
+                CATCH
+                    lOk := FALSE
+                END TRY
+            ENDIF
+            IF lOk
+                SELF:Recs:Add( (LONG) RecNo() )
+            ENDIF
+            DbSkip( 1 )
+        ENDDO
+        RETURN
+
+    /// <summary>Convert the scope text to match the type of the index key</summary>
+    PUBLIC METHOD ScopeValue( cText AS STRING ) AS OBJECT
+        IF cText:Length == 0
+            RETURN NULL
+        ENDIF
+        LOCAL oPattern := NULL AS OBJECT
+        SELF:Sel()
+        DbGoTop()
+        IF ! Eof()
+            oPattern := OrdKeyVal()
+        ENDIF
+        IF oPattern IS STRING .OR. oPattern == NULL
+            RETURN cText
+        ENDIF
+        IF oPattern IS IDate .OR. oPattern IS DateTime
+            RETURN AppSettings.ParseDate( cText )
+        ENDIF
+        RETURN Double.Parse( cText:Replace( "'", "" ):Replace( ",", "." ), CultureInfo.InvariantCulture )
+
+    /// <summary>Compare the current key with the scope: -1 = before "from", 0 = inside, 1 = after "to"</summary>
+    PUBLIC METHOD CompareScope() AS INT
+        LOCAL oKey := NULL AS OBJECT
+        TRY
+            oKey := OrdKeyVal()
+        CATCH
+            RETURN 0
+        END TRY
+        IF SELF:ScopeFrom != NULL .AND. SELF:CompareValue( oKey, SELF:ScopeFrom ) < 0
+            RETURN -1
+        ENDIF
+        IF SELF:ScopeTo != NULL .AND. SELF:CompareValue( oKey, SELF:ScopeTo ) > 0
+            RETURN 1
+        ENDIF
+        RETURN 0
+
+    // Character: compare only over the length of the scope value (like Clipper/VO)
+    PRIVATE METHOD CompareValue( oKey AS OBJECT, oLimit AS OBJECT ) AS INT
+        IF oKey == NULL
+            RETURN 0
+        ENDIF
+        IF oLimit IS STRING
+            LOCAL cLimit := (STRING) oLimit AS STRING
+            LOCAL cKey    := oKey:ToString() AS STRING
+            IF cKey:Length > cLimit:Length
+                cKey := cKey:Substring( 0, cLimit:Length )
+            ENDIF
+            // case-insensitive, accented characters sorted like the Windows sort order
+            RETURN Math.Sign( String.Compare( cKey, cLimit, StringComparison.CurrentCultureIgnoreCase ) )
+        ENDIF
+        IF oLimit IS DateTime
+            LOCAL dKey AS DateTime
+            IF oKey IS IDate
+                LOCAL oDate := (IDate) oKey AS IDate
+                IF oDate:IsEmpty
+                    RETURN -1
+                ENDIF
+                dKey := DateTime{ oDate:Year, oDate:Month, oDate:Day }
+            ELSE
+                dKey := Convert.ToDateTime( oKey )
+            ENDIF
+            RETURN Math.Sign( DateTime.Compare( dKey, (DateTime) oLimit ) )
+        ENDIF
+        RETURN Math.Sign( Convert.ToDouble( oKey ):CompareTo( Convert.ToDouble( oLimit ) ) )
+
+    // =====================================================================
+    // Delete / recall
+    // =====================================================================
+    /// <summary>Set (lDelete) or clear the deleted flag of one record.</summary>
+    PUBLIC METHOD SetDeleted( nRec AS LONG, lDelete AS LOGIC ) AS DbfResult
+        LOCAL oResult := DbfResult{} AS DbfResult
+        TRY
+            SELF:Sel()
+            DbGoto( nRec )
+            IF ! SELF:TryLock( nRec )
+                oResult:Locked    := 1
+                oResult:LockedRec := nRec
+                RETURN oResult
+            ENDIF
+            IF lDelete
+                DbDelete()
+            ELSE
+                DbRecall()
+            ENDIF
+            SELF:AfterWrite()
+            oResult:Done := 1
+        CATCH ex AS Exception
+            oResult:Error := ex:Message
+        END TRY
+        RETURN oResult
+
+    /// <summary>Recall every deleted record of the file (independent of the view)</summary>
+    PUBLIC METHOD RecallAll() AS DbfResult
+        LOCAL oResult := DbfResult{} AS DbfResult
+        TRY
+            SELF:Sel()
+            LOCAL nMax := (LONG) LastRec() + 10 AS LONG
+            SELF:NaturalOrder()
+            DbGoTop()
+            DO WHILE ! Eof() .AND. nMax > 0
+                nMax--
+                IF Deleted()
+                    IF SELF:Exclusive .OR. DbRLock( RecNo() )
+                        DbRecall()
+                        oResult:Done++
+                    ELSE
+                        oResult:Locked++
+                    ENDIF
+                ENDIF
+                DbSkip( 1 )
+            ENDDO
+            SELF:RestoreOrder()
+            DbCommit()
+            IF ! SELF:Exclusive
+                DbUnlock()
+            ENDIF
+        CATCH ex AS Exception
+            oResult:Error := ex:Message
+        END TRY
+        RETURN oResult
+
+    /// <summary>Delete all records that are currently in the view (Recs). Records that are already deleted are skipped.</summary>
+    PUBLIC METHOD DeleteView() AS DbfResult
+        LOCAL oResult := DbfResult{} AS DbfResult
+        // snapshot: the list changes while records disappear from the view
+        LOCAL aTodo := List<LONG>{ SELF:Recs } AS List<LONG>
+        TRY
+            SELF:Sel()
+            FOREACH nR AS LONG IN aTodo
+                DbGoto( nR )
+                IF Deleted()
+                    LOOP
+                ENDIF
+                IF SELF:Exclusive .OR. DbRLock( nR )
+                    DbDelete()
+                    oResult:Done++
+                ELSE
+                    oResult:Locked++
+                ENDIF
+            NEXT
+            DbCommit()
+            IF ! SELF:Exclusive
+                DbUnlock()
+            ENDIF
+        CATCH ex AS Exception
+            oResult:Error := ex:Message
+        END TRY
+        RETURN oResult
+
+    /// <summary>Number of deleted records in the file (independent of the view)</summary>
+    PUBLIC METHOD CountDeleted() AS INT
+        LOCAL nDelCount := 0 AS INT
+        SELF:Sel()
+        LOCAL nMax := (LONG) LastRec() + 10 AS LONG
+        SELF:NaturalOrder()
+        DbGoTop()
+        DO WHILE ! Eof() .AND. nMax > 0
+            nMax--
+            IF Deleted()
+                nDelCount++
+            ENDIF
+            DbSkip( 1 )
+        ENDDO
+        SELF:RestoreOrder()
+        RETURN nDelCount
+
+END CLASS
+
+END NAMESPACE
