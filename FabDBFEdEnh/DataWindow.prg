@@ -828,45 +828,24 @@ PUBLIC CLASS DataWindow INHERIT System.Windows.Forms.Form
         IF cValue:Length > 0 .AND. ! SELF:cmbSearch:Items:Contains( cValue )
             SELF:cmbSearch:Items:Insert( 0, cValue )
         ENDIF
-        TRY
-            SELF:Sel()
-            DbSeek( cValue, TRUE )
-            IF Eof()
-                DbGoBottom()
-            ENDIF
-            LOCAL nRec := (LONG) RecNo() AS LONG
-            IF SELF:GoToCloseRec( nRec, FALSE )
-                SELF:grid:Focus()
-            ENDIF
-        CATCH ex AS Exception
-            MessageBox.Show( "Search not possible: " + ex:Message, "Search" )
-        END TRY
+        SELF:SyncOrder()
+        LOCAL oResult := SELF:oTable:Seek( cValue ) AS DbfResult
+        IF oResult:Failed
+            MessageBox.Show( "Search not possible: " + oResult:Error, "Search" )
+        ELSEIF SELF:GoToCloseRec( oResult:Rec, FALSE )
+            SELF:grid:Focus()
+        ENDIF
         RETURN
 
     // =====================================================================
     // Index / Order
     // =====================================================================
     PUBLIC METHOD LoadOrders() AS VOID
-        LOCAL cCurrent := "" AS STRING
         SELF:lOrderLoad := TRUE
-        SELF:Sel()
+        LOCAL cCurrent := SELF:oTable:CurrentOrderName() AS STRING
         SELF:cmbOrder:Items:Clear()
         SELF:cmbOrder:Items:Add( "<Natural Order>" )
-        TRY
-            cCurrent := ((STRING) OrdSetFocus()):Trim()
-        CATCH
-            cCurrent := ""
-        END TRY
-        FOR VAR i := 1 TO 200
-            LOCAL cName := "" AS STRING
-            TRY
-                cName := ((STRING) OrdName( i )):Trim()
-            CATCH
-                cName := ""
-            END TRY
-            IF cName:Length == 0
-                EXIT
-            ENDIF
+        FOREACH cName AS STRING IN SELF:oTable:OrderNames()
             SELF:cmbOrder:Items:Add( cName )
         NEXT
         SELF:cmbOrder:SelectedIndex := 0
@@ -885,20 +864,15 @@ PUBLIC CLASS DataWindow INHERIT System.Windows.Forms.Form
         ENDIF
         LOCAL nRec := SELF:CurrentRec() AS LONG
         // The scope only applies to the order it was set for
-        SELF:oScopeFrom := NULL
-        SELF:oScopeTo := NULL
-        SELF:cScopeFrom := ""
-        SELF:cScopeTo := ""
-        TRY
-            SELF:Sel()
-            IF SELF:cmbOrder:SelectedIndex <= 0
-                OrdSetFocus( 0 )
-            ELSE
-                OrdSetFocus( (STRING) SELF:cmbOrder:SelectedItem )
-            ENDIF
-        CATCH ex AS Exception
-            MessageBox.Show( ex:Message, "Order" )
-        END TRY
+        SELF:oTable:ClearScope()
+        LOCAL cOrder := "" AS STRING
+        IF SELF:cmbOrder:SelectedIndex > 0
+            cOrder := (STRING) SELF:cmbOrder:SelectedItem
+        ENDIF
+        LOCAL oResult := SELF:oTable:SetFocusOrder( cOrder ) AS DbfResult
+        IF oResult:Failed
+            MessageBox.Show( oResult:Error, "Order" )
+        ENDIF
         SELF:MarkOrderColumn()
         SELF:LoadList( nRec )
         RETURN
@@ -907,12 +881,7 @@ PUBLIC CLASS DataWindow INHERIT System.Windows.Forms.Form
     PRIVATE METHOD MarkOrderColumn() AS VOID
         LOCAL cKey := "" AS STRING
         IF SELF:cmbOrder:SelectedIndex > 0
-            TRY
-                SELF:Sel()
-                cKey := ((STRING) OrdKey()):ToUpper()
-            CATCH
-                cKey := ""
-            END TRY
+            cKey := SELF:oTable:ActiveOrderKey()
         ENDIF
         SELF:cKeyExpression := cKey
         FOR VAR i := 1 TO SELF:nFields
@@ -930,24 +899,21 @@ PUBLIC CLASS DataWindow INHERIT System.Windows.Forms.Form
         ofd:Filter := "Index (*.cdx;*.ntx;*.idx)|*.cdx;*.ntx;*.idx|All files (*.*)|*.*"
         ofd:InitialDirectory := Path.GetDirectoryName( SELF:cFile )
         IF ofd:ShowDialog( SELF ) == DialogResult.OK
-            TRY
-                SELF:Sel()
-                OrdListAdd( ofd:FileName )
+            LOCAL oResult := SELF:oTable:AddIndexFile( ofd:FileName ) AS DbfResult
+            IF oResult:Failed
+                MessageBox.Show( oResult:Error, "Open index" )
+            ELSE
                 SELF:LoadOrders()
-            CATCH ex AS Exception
-                MessageBox.Show( ex:Message, "Open index" )
-            END TRY
+            ENDIF
         ENDIF
         RETURN
 
     PUBLIC METHOD CloseIndexes() AS VOID
         LOCAL nRec := SELF:CurrentRec() AS LONG
-        TRY
-            SELF:Sel()
-            OrdListClear()
-        CATCH ex AS Exception
-            MessageBox.Show( ex:Message, "Index" )
-        END TRY
+        LOCAL oResult := SELF:oTable:ClearIndexFiles() AS DbfResult
+        IF oResult:Failed
+            MessageBox.Show( oResult:Error, "Index" )
+        ENDIF
         SELF:LoadOrders()
         SELF:LoadList( nRec )
         RETURN
@@ -1497,28 +1463,11 @@ PUBLIC CLASS DataWindow INHERIT System.Windows.Forms.Form
     /// <summary>Set the filter expression (empty = filter off). Needs the X# macro compiler.</summary>
     PUBLIC METHOD SetFilter( cExpression AS STRING ) AS LOGIC
         LOCAL nRec := SELF:CurrentRec() AS LONG
-        cExpression := cExpression:Trim()
-        IF cExpression:Length == 0
-            SELF:oFilterCb   := NULL
-            SELF:cFilterText := ""
-            SELF:LoadList( nRec )
-            RETURN TRUE
-        ENDIF
-        TRY
-            SELF:Sel()
-            LOCAL oCb := MCompile( cExpression ) AS OBJECT
-            DbGoTop()
-            LOCAL oTest := Eval( oCb ) AS OBJECT       // Trial run: must return LOGIC
-            IF ! ( oTest IS LOGIC )
-                MessageBox.Show( "The expression does not return a logical value (.T./.F.).", "Set Filter", MessageBoxButtons.OK, MessageBoxIcon.Warning )
-                RETURN FALSE
-            ENDIF
-            SELF:oFilterCb   := oCb
-            SELF:cFilterText := cExpression
-        CATCH ex AS Exception
-            MessageBox.Show( "Invalid filter expression:" + Environment.NewLine + ex:Message, "Set Filter", MessageBoxButtons.OK, MessageBoxIcon.Warning )
+        LOCAL oResult := SELF:oTable:SetFilter( cExpression ) AS DbfResult
+        IF oResult:Invalid
+            MessageBox.Show( oResult:Error, "Set Filter", MessageBoxButtons.OK, MessageBoxIcon.Warning )
             RETURN FALSE
-        END TRY
+        ENDIF
         SELF:LoadList( nRec )
         RETURN TRUE
 
@@ -1529,15 +1478,12 @@ PUBLIC CLASS DataWindow INHERIT System.Windows.Forms.Form
             MessageBox.Show( "For a scope, please select an order first.", "Order Scope" )
             RETURN FALSE
         ENDIF
-        TRY
-            SELF:oScopeFrom := SELF:oTable:ScopeValue( cFrom )
-            SELF:oScopeTo := SELF:oTable:ScopeValue( cTo )
-            SELF:cScopeFrom := cFrom
-            SELF:cScopeTo := cTo
-        CATCH ex AS Exception
-            MessageBox.Show( "Invalid scope value: " + ex:Message, "Order Scope", MessageBoxButtons.OK, MessageBoxIcon.Warning )
+        SELF:SyncOrder()
+        LOCAL oResult := SELF:oTable:SetScope( cFrom, cTo ) AS DbfResult
+        IF oResult:Invalid
+            MessageBox.Show( oResult:Error, "Order Scope", MessageBoxButtons.OK, MessageBoxIcon.Warning )
             RETURN FALSE
-        END TRY
+        ENDIF
         SELF:LoadList( nRec )
         RETURN TRUE
 
@@ -1546,40 +1492,10 @@ PUBLIC CLASS DataWindow INHERIT System.Windows.Forms.Form
     // =====================================================================
     /// <summary>List of the orders: name, expression, condition, index file</summary>
     PUBLIC METHOD GetOrders() AS List<STRING[]>
-        LOCAL aList := List<STRING[]>{} AS List<STRING[]>
-        SELF:Sel()
-        FOR VAR i := 1 TO 200
-            LOCAL cName := "" AS STRING
-            TRY
-                cName := ((STRING) OrdName( i )):Trim()
-            CATCH
-                cName := ""
-            END TRY
-            IF cName:Length == 0
-                EXIT
-            ENDIF
-            LOCAL cKey := "", cFor := "", cBag := "" AS STRING
-            TRY
-                cKey := ((STRING) OrdKey( i )):Trim()
-            CATCH
-                NOP
-            END TRY
-            TRY
-                cFor := ((STRING) OrdFor( i )):Trim()
-            CATCH
-                NOP
-            END TRY
-            TRY
-                cBag := ((STRING) OrdBagName( i )):Trim()
-            CATCH
-                NOP
-            END TRY
-            aList:Add( <STRING>{ cName, cKey, cFor, cBag } )
-        NEXT
-        RETURN aList
+        RETURN SELF:oTable:GetOrders()
 
     PRIVATE METHOD ExclusiveRequired( cAction AS STRING ) AS LOGIC
-        IF SELF:lReadOnly .OR. ! SELF:lExclusive
+        IF ! SELF:oTable:CanRestructure
             MessageBox.Show( cAction + " is only possible when the file is opened EXCLUSIVE and not read-only.", ;
                 cAction, MessageBoxButtons.OK, MessageBoxIcon.Information )
             RETURN TRUE
@@ -1592,31 +1508,19 @@ PUBLIC CLASS DataWindow INHERIT System.Windows.Forms.Form
             RETURN FALSE
         ENDIF
         LOCAL nRec := SELF:CurrentRec() AS LONG
-        TRY
-            SELF:Sel()
-            LOCAL cBag AS STRING
-            IF SELF:cDriver:ToUpper():Contains( "NTX" )
-                cBag := Path.Combine( Path.GetDirectoryName( SELF:cFile ), cName + ".ntx" )
-            ELSE
-                cBag := Path.ChangeExtension( SELF:cFile, ".cdx" )
-            ENDIF
-            LOCAL cError := StructureRebuild.CreateOrder( cBag, cName, cExpression, cCondition, lUnique ) AS STRING
-            IF cError:Length > 0
-                MessageBox.Show( "The order could not be created:" + Environment.NewLine + cError, "New order", MessageBoxButtons.OK, MessageBoxIcon.Error )
-                SELF:LoadOrders()
-                RETURN FALSE
-            ENDIF
+        LOCAL oResult := SELF:oTable:CreateOrder( cName, cExpression, cCondition, lUnique ) AS DbfResult
+        IF oResult:Failed
+            MessageBox.Show( "The order could not be created:" + Environment.NewLine + oResult:Error, "New order", MessageBoxButtons.OK, MessageBoxIcon.Error )
             SELF:LoadOrders()
-            // activate the new order
-            FOR VAR i := 1 TO SELF:cmbOrder:Items:Count - 1
-                IF String.Compare( (STRING) SELF:cmbOrder:Items[i], cName, TRUE ) == 0
-                    SELF:cmbOrder:SelectedIndex := i
-                ENDIF
-            NEXT
-        CATCH ex AS Exception
-            MessageBox.Show( "The order could not be created:" + Environment.NewLine + ex:Message, "New order", MessageBoxButtons.OK, MessageBoxIcon.Error )
             RETURN FALSE
-        END TRY
+        ENDIF
+        SELF:LoadOrders()
+        // activate the new order
+        FOR VAR i := 1 TO SELF:cmbOrder:Items:Count - 1
+            IF String.Compare( (STRING) SELF:cmbOrder:Items[i], cName, TRUE ) == 0
+                SELF:cmbOrder:SelectedIndex := i
+            ENDIF
+        NEXT
         SELF:LoadList( nRec )
         RETURN TRUE
 
@@ -1625,13 +1529,10 @@ PUBLIC CLASS DataWindow INHERIT System.Windows.Forms.Form
             RETURN FALSE
         ENDIF
         LOCAL nRec := SELF:CurrentRec() AS LONG
-        TRY
-            SELF:Sel()
-            OrdSetFocus( 0 )
-            OrdDestroy( cName, cBag )
-        CATCH ex AS Exception
-            MessageBox.Show( "The order could not be deleted:" + Environment.NewLine + ex:Message, "Delete order", MessageBoxButtons.OK, MessageBoxIcon.Error )
-        END TRY
+        LOCAL oResult := SELF:oTable:DestroyOrder( cName, cBag ) AS DbfResult
+        IF oResult:Failed
+            MessageBox.Show( "The order could not be deleted:" + Environment.NewLine + oResult:Error, "Delete order", MessageBoxButtons.OK, MessageBoxIcon.Error )
+        ENDIF
         SELF:LoadOrders()
         SELF:LoadList( nRec )
         RETURN TRUE
@@ -1641,15 +1542,16 @@ PUBLIC CLASS DataWindow INHERIT System.Windows.Forms.Form
             RETURN FALSE
         ENDIF
         LOCAL nRec := SELF:CurrentRec() AS LONG
+        LOCAL oResult := DbfResult{} AS DbfResult
         TRY
             SELF:Cursor := Cursors.WaitCursor
-            SELF:Sel()
-            OrdListRebuild()
-        CATCH ex AS Exception
-            MessageBox.Show( "ReIndex failed:" + Environment.NewLine + ex:Message, "ReIndex", MessageBoxButtons.OK, MessageBoxIcon.Error )
+            oResult := SELF:oTable:ReIndex()
         FINALLY
             SELF:Cursor := Cursors.Default
         END TRY
+        IF oResult:Failed
+            MessageBox.Show( "ReIndex failed:" + Environment.NewLine + oResult:Error, "ReIndex", MessageBoxButtons.OK, MessageBoxIcon.Error )
+        ENDIF
         SELF:LoadList( nRec )
         RETURN TRUE
 
@@ -1658,39 +1560,14 @@ PUBLIC CLASS DataWindow INHERIT System.Windows.Forms.Form
     PUBLIC METHOD CreateAllOrders( aList AS List<STRING[]> ) AS List<STRING>
         LOCAL aStatus := List<STRING>{} AS List<STRING>
         LOCAL nRec    := SELF:CurrentRec() AS LONG
-        LOCAL cCdx    := Path.ChangeExtension( SELF:cFile, ".cdx" ) AS STRING
-        LOCAL cBase  := Path.GetFileNameWithoutExtension( SELF:cFile ) AS STRING
         IF SELF:ExclusiveRequired( "Create indexes" )
             RETURN aStatus
         ENDIF
-        IF SELF:cDriver:ToUpper():Contains( "NTX" )
+        IF SELF:oTable:IsNtx
             MessageBox.Show( "Recreating all orders is not yet supported for DBFNTX.", "Create indexes" )
             RETURN aStatus
         ENDIF
-        SELF:Sel()
-        // 1. remove the existing orders of the production CDX
-        TRY
-            OrdSetFocus( 0 )
-        CATCH
-            NOP
-        END TRY
-        FOREACH aOrd AS STRING[] IN SELF:GetOrders()
-            LOCAL cBag := (STRING) aOrd:GetValue( 3 ) AS STRING
-            IF cBag:Length == 0 .OR. String.Compare( Path.GetFileNameWithoutExtension( cBag ), cBase, TRUE ) == 0
-                TRY
-                    SELF:Sel()
-                    OrdDestroy( (STRING) aOrd:GetValue( 0 ), IIF( cBag:Length == 0, cCdx, cBag ) )
-                CATCH
-                    NOP
-                END TRY
-            ENDIF
-        NEXT
-        // 2. create all orders of the list additively
-        FOREACH aOrd AS STRING[] IN aList
-            SELF:Sel()
-            aStatus:Add( StructureRebuild.CreateOrder( cCdx, (STRING) aOrd:GetValue( 0 ), (STRING) aOrd:GetValue( 1 ), ;
-                (STRING) aOrd:GetValue( 2 ), (STRING) aOrd:GetValue( 3 ) == "1" ) )
-        NEXT
+        aStatus := SELF:oTable:RebuildOrders( aList )
         SELF:LoadOrders()
         SELF:LoadList( nRec )
         RETURN aStatus
@@ -1872,17 +1749,14 @@ PUBLIC CLASS DataWindow INHERIT System.Windows.Forms.Form
             RETURN
         ENDIF
         LOCAL cName := Path.GetFileNameWithoutExtension( SELF:cFile ):ToUpper() AS STRING
-        SELF:Sel()
-        IF MessageBox.Show( "All " + Convert.ToString( (LONG) LastRec() ) + " records of " + cName + " will be deleted permanently (Zap). Continue?", ;
+        IF MessageBox.Show( "All " + Convert.ToString( SELF:oTable:RecordCount() ) + " records of " + cName + " will be deleted permanently (Zap). Continue?", ;
             "Zap", MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2 ) != DialogResult.Yes
             RETURN
         ENDIF
-        TRY
-            SELF:Sel()
-            DbZap()
-        CATCH ex AS Exception
-            MessageBox.Show( "Zap failed: " + ex:Message, "Zap", MessageBoxButtons.OK, MessageBoxIcon.Error )
-        END TRY
+        LOCAL oResult := SELF:oTable:Zap() AS DbfResult
+        IF oResult:Failed
+            MessageBox.Show( "Zap failed: " + oResult:Error, "Zap", MessageBoxButtons.OK, MessageBoxIcon.Error )
+        ENDIF
         SELF:LoadList( 0 )
         RETURN
 

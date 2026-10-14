@@ -650,6 +650,294 @@ PUBLIC CLASS DbfTable
         END TRY
         RETURN oResult
 
+    // =====================================================================
+    // Filter and scope
+    // =====================================================================
+    /// <summary>Set the filter expression (empty = filter off). Needs the X# macro compiler. Does not reload the list.
+    /// Invalid = the expression is not usable (Error holds the message), the previous filter stays.</summary>
+    PUBLIC METHOD SetFilter( cExpression AS STRING ) AS DbfResult
+        LOCAL oResult := DbfResult{} AS DbfResult
+        cExpression := cExpression:Trim()
+        IF cExpression:Length == 0
+            SELF:FilterCb   := NULL
+            SELF:FilterText := ""
+            oResult:Done := 1
+            RETURN oResult
+        ENDIF
+        TRY
+            SELF:Sel()
+            LOCAL oCb := MCompile( cExpression ) AS OBJECT
+            DbGoTop()
+            LOCAL oTest := Eval( oCb ) AS OBJECT       // Trial run: must return LOGIC
+            IF ! ( oTest IS LOGIC )
+                oResult:Invalid := TRUE
+                oResult:Error   := "The expression does not return a logical value (.T./.F.)."
+                RETURN oResult
+            ENDIF
+            SELF:FilterCb   := oCb
+            SELF:FilterText := cExpression
+            oResult:Done := 1
+        CATCH ex AS Exception
+            oResult:Invalid := TRUE
+            oResult:Error   := "Invalid filter expression:" + Environment.NewLine + ex:Message
+        END TRY
+        RETURN oResult
+
+    /// <summary>Set the scope (from/to) for the active order; empty values = open. Does not reload the list.</summary>
+    PUBLIC METHOD SetScope( cFrom AS STRING, cTo AS STRING ) AS DbfResult
+        LOCAL oResult := DbfResult{} AS DbfResult
+        TRY
+            LOCAL oFrom := SELF:ScopeValue( cFrom ) AS OBJECT
+            LOCAL oTo   := SELF:ScopeValue( cTo ) AS OBJECT
+            SELF:ScopeFrom     := oFrom
+            SELF:ScopeTo       := oTo
+            SELF:ScopeFromText := cFrom
+            SELF:ScopeToText   := cTo
+            oResult:Done := 1
+        CATCH ex AS Exception
+            oResult:Invalid := TRUE
+            oResult:Error   := "Invalid scope value: " + ex:Message
+        END TRY
+        RETURN oResult
+
+    /// <summary>The scope only applies to the order it was set for</summary>
+    PUBLIC METHOD ClearScope() AS VOID
+        SELF:ScopeFrom     := NULL
+        SELF:ScopeTo       := NULL
+        SELF:ScopeFromText := ""
+        SELF:ScopeToText   := ""
+        RETURN
+
+    // =====================================================================
+    // Orders (indexes)
+    // =====================================================================
+    PUBLIC PROPERTY IsNtx AS LOGIC GET SELF:Driver:ToUpper():Contains( "NTX" )
+    /// <summary>Structure changes (index creation, reindex, zap) need exclusive, writable access</summary>
+    PUBLIC PROPERTY CanRestructure AS LOGIC GET ! SELF:ReadOnly .AND. SELF:Exclusive
+
+    /// <summary>Names of all orders of all open index files</summary>
+    PUBLIC METHOD OrderNames() AS List<STRING>
+        LOCAL aNames := List<STRING>{} AS List<STRING>
+        SELF:Sel()
+        FOR VAR i := 1 TO 200
+            LOCAL cName := "" AS STRING
+            TRY
+                cName := ((STRING) OrdName( i )):Trim()
+            CATCH
+                cName := ""
+            END TRY
+            IF cName:Length == 0
+                EXIT
+            ENDIF
+            aNames:Add( cName )
+        NEXT
+        RETURN aNames
+
+    /// <summary>Name of the order that is active in the work area ("" = natural order)</summary>
+    PUBLIC METHOD CurrentOrderName() AS STRING
+        TRY
+            SELF:Sel()
+            RETURN ((STRING) OrdSetFocus()):Trim()
+        CATCH
+            RETURN ""
+        END TRY
+
+    /// <summary>Key expression of the active order (upper case), "" when there is none</summary>
+    PUBLIC METHOD ActiveOrderKey() AS STRING
+        TRY
+            SELF:Sel()
+            RETURN ((STRING) OrdKey()):ToUpper()
+        CATCH
+            RETURN ""
+        END TRY
+
+    /// <summary>List of the orders: name, expression, condition, index file</summary>
+    PUBLIC METHOD GetOrders() AS List<STRING[]>
+        LOCAL aList := List<STRING[]>{} AS List<STRING[]>
+        SELF:Sel()
+        FOR VAR i := 1 TO 200
+            LOCAL cName := "" AS STRING
+            TRY
+                cName := ((STRING) OrdName( i )):Trim()
+            CATCH
+                cName := ""
+            END TRY
+            IF cName:Length == 0
+                EXIT
+            ENDIF
+            LOCAL cKey := "", cFor := "", cBag := "" AS STRING
+            TRY
+                cKey := ((STRING) OrdKey( i )):Trim()
+            CATCH
+                NOP
+            END TRY
+            TRY
+                cFor := ((STRING) OrdFor( i )):Trim()
+            CATCH
+                NOP
+            END TRY
+            TRY
+                cBag := ((STRING) OrdBagName( i )):Trim()
+            CATCH
+                NOP
+            END TRY
+            aList:Add( <STRING>{ cName, cKey, cFor, cBag } )
+        NEXT
+        RETURN aList
+
+    /// <summary>Make an order active in the work area ("" = natural order)</summary>
+    PUBLIC METHOD SetFocusOrder( cName AS STRING ) AS DbfResult
+        LOCAL oResult := DbfResult{} AS DbfResult
+        TRY
+            SELF:Sel()
+            IF cName:Length == 0
+                OrdSetFocus( 0 )
+            ELSE
+                OrdSetFocus( cName )
+            ENDIF
+            oResult:Done := 1
+        CATCH ex AS Exception
+            oResult:Error := ex:Message
+        END TRY
+        RETURN oResult
+
+    /// <summary>Soft seek in the active order; Rec = the record found (the last record when beyond the end)</summary>
+    PUBLIC METHOD Seek( cValue AS STRING ) AS DbfResult
+        LOCAL oResult := DbfResult{} AS DbfResult
+        TRY
+            SELF:Sel()
+            DbSeek( cValue, TRUE )
+            IF Eof()
+                DbGoBottom()
+            ENDIF
+            oResult:Rec  := (LONG) RecNo()
+            oResult:Done := 1
+        CATCH ex AS Exception
+            oResult:Error := ex:Message
+        END TRY
+        RETURN oResult
+
+    /// <summary>Open an additional index file</summary>
+    PUBLIC METHOD AddIndexFile( cIndexFile AS STRING ) AS DbfResult
+        LOCAL oResult := DbfResult{} AS DbfResult
+        TRY
+            SELF:Sel()
+            OrdListAdd( cIndexFile )
+            oResult:Done := 1
+        CATCH ex AS Exception
+            oResult:Error := ex:Message
+        END TRY
+        RETURN oResult
+
+    /// <summary>Close all index files</summary>
+    PUBLIC METHOD ClearIndexFiles() AS DbfResult
+        LOCAL oResult := DbfResult{} AS DbfResult
+        TRY
+            SELF:Sel()
+            OrdListClear()
+            oResult:Done := 1
+        CATCH ex AS Exception
+            oResult:Error := ex:Message
+        END TRY
+        RETURN oResult
+
+    /// <summary>Create a new order (CDX: in the production CDX, NTX: own file)</summary>
+    PUBLIC METHOD CreateOrder( cName AS STRING, cExpression AS STRING, cCondition AS STRING, lUnique AS LOGIC ) AS DbfResult
+        LOCAL oResult := DbfResult{} AS DbfResult
+        TRY
+            SELF:Sel()
+            LOCAL cBag AS STRING
+            IF SELF:IsNtx
+                cBag := Path.Combine( Path.GetDirectoryName( SELF:FileName ), cName + ".ntx" )
+            ELSE
+                cBag := Path.ChangeExtension( SELF:FileName, ".cdx" )
+            ENDIF
+            LOCAL cError := StructureRebuild.CreateOrder( cBag, cName, cExpression, cCondition, lUnique ) AS STRING
+            IF cError:Length > 0
+                oResult:Error := cError
+            ELSE
+                oResult:Done := 1
+            ENDIF
+        CATCH ex AS Exception
+            oResult:Error := ex:Message
+        END TRY
+        RETURN oResult
+
+    PUBLIC METHOD DestroyOrder( cName AS STRING, cBag AS STRING ) AS DbfResult
+        LOCAL oResult := DbfResult{} AS DbfResult
+        TRY
+            SELF:Sel()
+            OrdSetFocus( 0 )
+            OrdDestroy( cName, cBag )
+            oResult:Done := 1
+        CATCH ex AS Exception
+            oResult:Error := ex:Message
+        END TRY
+        RETURN oResult
+
+    PUBLIC METHOD ReIndex() AS DbfResult
+        LOCAL oResult := DbfResult{} AS DbfResult
+        TRY
+            SELF:Sel()
+            OrdListRebuild()
+            oResult:Done := 1
+        CATCH ex AS Exception
+            oResult:Error := ex:Message
+        END TRY
+        RETURN oResult
+
+    /// <summary>Rebuild the production CDX: remove its orders, create all orders of the list.
+    /// aList: name, expression, condition, unique ("1"/"0"). Returns "" (OK) or the error message per order.</summary>
+    PUBLIC METHOD RebuildOrders( aList AS List<STRING[]> ) AS List<STRING>
+        LOCAL aStatus := List<STRING>{} AS List<STRING>
+        LOCAL cCdx    := Path.ChangeExtension( SELF:FileName, ".cdx" ) AS STRING
+        LOCAL cBase   := Path.GetFileNameWithoutExtension( SELF:FileName ) AS STRING
+        SELF:Sel()
+        // 1. remove the existing orders of the production CDX
+        TRY
+            OrdSetFocus( 0 )
+        CATCH
+            NOP
+        END TRY
+        FOREACH aOrd AS STRING[] IN SELF:GetOrders()
+            LOCAL cBag := (STRING) aOrd:GetValue( 3 ) AS STRING
+            IF cBag:Length == 0 .OR. String.Compare( Path.GetFileNameWithoutExtension( cBag ), cBase, TRUE ) == 0
+                TRY
+                    SELF:Sel()
+                    OrdDestroy( (STRING) aOrd:GetValue( 0 ), IIF( cBag:Length == 0, cCdx, cBag ) )
+                CATCH
+                    NOP
+                END TRY
+            ENDIF
+        NEXT
+        // 2. create all orders of the list additively
+        FOREACH aOrd AS STRING[] IN aList
+            SELF:Sel()
+            aStatus:Add( StructureRebuild.CreateOrder( cCdx, (STRING) aOrd:GetValue( 0 ), (STRING) aOrd:GetValue( 1 ), ;
+                (STRING) aOrd:GetValue( 2 ), (STRING) aOrd:GetValue( 3 ) == "1" ) )
+        NEXT
+        RETURN aStatus
+
+    // =====================================================================
+    // Zap
+    // =====================================================================
+    /// <summary>Number of records in the file (deleted ones included)</summary>
+    PUBLIC METHOD RecordCount() AS LONG
+        SELF:Sel()
+        RETURN (LONG) LastRec()
+
+    /// <summary>Remove all records physically</summary>
+    PUBLIC METHOD Zap() AS DbfResult
+        LOCAL oResult := DbfResult{} AS DbfResult
+        TRY
+            SELF:Sel()
+            DbZap()
+            oResult:Done := 1
+        CATCH ex AS Exception
+            oResult:Error := ex:Message
+        END TRY
+        RETURN oResult
+
     /// <summary>Number of deleted records in the file (independent of the view)</summary>
     PUBLIC METHOD CountDeleted() AS INT
         LOCAL nDelCount := 0 AS INT

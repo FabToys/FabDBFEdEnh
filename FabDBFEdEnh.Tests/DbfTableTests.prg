@@ -291,6 +291,181 @@ PUBLIC CLASS DbfTableTests
         END TRY
         RETURN
 
+    // ------------------------------------------------------------------
+    // Slice 3: filter, scope, orders, zap
+    // ------------------------------------------------------------------
+    // records in file order: C, A, B (NAME), QTY 1..3
+    PRIVATE STATIC METHOD CreateCab( oData AS TestData ) AS STRING
+        LOCAL aFields := <RddFieldInfo>{ TestData.Field( "NAME", "C", 10, 0 ), TestData.Field( "QTY", "N", 5, 0 ) } AS RddFieldInfo[]
+        LOCAL cFile := oData:CreateTable( "cab", aFields ) AS STRING
+        oData:Append( cFile, <OBJECT>{ "C", 1 } )
+        oData:Append( cFile, <OBJECT>{ "A", 2 } )
+        oData:Append( cFile, <OBJECT>{ "B", 3 } )
+        RETURN cFile
+
+    [Fact];
+    PUBLIC METHOD CreateOrder_IsListedAndSortsTheView() AS VOID
+        VAR oData := TestData{}
+        TRY
+            VAR oTable := OpenTable( CreateCab( oData ), TRUE )
+            Assert.True( oTable:CanRestructure )
+            Assert.Equal( 1, oTable:CreateOrder( "BYNAME", "NAME", "", FALSE ):Done )
+            Assert.Contains( "BYNAME", oTable:OrderNames() )
+            VAR aOrders := oTable:GetOrders()
+            Assert.Equal( "BYNAME", (STRING) aOrders[0]:GetValue( 0 ) )
+            Assert.Equal( "NAME", (STRING) aOrders[0]:GetValue( 1 ) )
+            Assert.Equal( 1, oTable:SetFocusOrder( "BYNAME" ):Done )
+            oTable:ActiveOrder := "BYNAME"
+            Assert.Equal( "BYNAME", oTable:CurrentOrderName() )
+            Assert.Equal( "NAME", oTable:ActiveOrderKey() )
+            oTable:LoadList()
+            Assert.Equal( 3, oTable:Recs:Count )
+            Assert.Equal( 2L, oTable:Recs[0] )      // A
+            Assert.Equal( 3L, oTable:Recs[1] )      // B
+            Assert.Equal( 1L, oTable:Recs[2] )      // C
+            oTable:Close()
+        FINALLY
+            oData:Dispose()
+        END TRY
+        RETURN
+
+    [Fact];
+    PUBLIC METHOD Seek_FindsKeyInActiveOrder() AS VOID
+        VAR oData := TestData{}
+        TRY
+            VAR oTable := OpenTable( CreateCab( oData ), TRUE )
+            oTable:CreateOrder( "BYNAME", "NAME", "", FALSE )
+            oTable:SetFocusOrder( "BYNAME" )
+            VAR oResult := oTable:Seek( "B" )
+            Assert.Equal( 1, oResult:Done )
+            Assert.Equal( 3L, oResult:Rec )
+            // beyond the last key: the last record of the order
+            Assert.Equal( 1L, oTable:Seek( "Z" ):Rec )
+            oTable:Close()
+        FINALLY
+            oData:Dispose()
+        END TRY
+        RETURN
+
+    [Fact];
+    PUBLIC METHOD SetScope_LimitsTheViewToTheKeyRange() AS VOID
+        VAR oData := TestData{}
+        TRY
+            VAR oTable := OpenTable( CreateCab( oData ), TRUE )
+            oTable:CreateOrder( "BYNAME", "NAME", "", FALSE )
+            oTable:SetFocusOrder( "BYNAME" )
+            oTable:ActiveOrder := "BYNAME"
+            Assert.Equal( 1, oTable:SetScope( "A", "B" ):Done )
+            oTable:LoadList()
+            Assert.Equal( 2, oTable:Recs:Count )
+            Assert.DoesNotContain( 1L, oTable:Recs )   // C is outside the scope
+            oTable:ClearScope()
+            oTable:LoadList()
+            Assert.Equal( 3, oTable:Recs:Count )
+            oTable:Close()
+        FINALLY
+            oData:Dispose()
+        END TRY
+        RETURN
+
+    [Fact];
+    PUBLIC METHOD SetFilter_AcceptsLogicalAndRejectsOtherExpressions() AS VOID
+        VAR oData := TestData{}
+        TRY
+            VAR oTable := OpenTable( CreateCab( oData ), TRUE )
+            Assert.Equal( 1, oTable:SetFilter( "QTY > 1" ):Done )
+            Assert.Equal( "QTY > 1", oTable:FilterText )
+            oTable:LoadList()
+            Assert.Equal( 2, oTable:Recs:Count )
+            // not logical: rejected, the previous filter stays
+            VAR oBad := oTable:SetFilter( "QTY + 1" )
+            Assert.True( oBad:Invalid )
+            Assert.Equal( "QTY > 1", oTable:FilterText )
+            // empty = filter off
+            Assert.Equal( 1, oTable:SetFilter( "  " ):Done )
+            Assert.Equal( "", oTable:FilterText )
+            oTable:LoadList()
+            Assert.Equal( 3, oTable:Recs:Count )
+            oTable:Close()
+        FINALLY
+            oData:Dispose()
+        END TRY
+        RETURN
+
+    [Fact];
+    PUBLIC METHOD DestroyOrder_RemovesItFromTheList() AS VOID
+        VAR oData := TestData{}
+        TRY
+            VAR oTable := OpenTable( CreateCab( oData ), TRUE )
+            oTable:CreateOrder( "BYNAME", "NAME", "", FALSE )
+            oTable:CreateOrder( "BYQTY", "STR(QTY,5)", "", FALSE )
+            Assert.Equal( 2, oTable:OrderNames():Count )
+            Assert.Equal( 1, oTable:DestroyOrder( "BYNAME", "" ):Done )
+            Assert.Single( oTable:OrderNames() )
+            Assert.Equal( "BYQTY", oTable:OrderNames()[0] )
+            oTable:Close()
+        FINALLY
+            oData:Dispose()
+        END TRY
+        RETURN
+
+    [Fact];
+    PUBLIC METHOD RebuildOrders_ReplacesAllOrdersOfTheProductionCdx() AS VOID
+        VAR oData := TestData{}
+        TRY
+            VAR oTable := OpenTable( CreateCab( oData ), TRUE )
+            oTable:CreateOrder( "BYNAME", "NAME", "", FALSE )
+            VAR aList := List<STRING[]>{}
+            aList:Add( <STRING>{ "BYQTY", "STR(QTY,5)", "", "0" } )
+            aList:Add( <STRING>{ "BYNAME2", "NAME", "", "0" } )
+            VAR aStatus := oTable:RebuildOrders( aList )
+            Assert.Equal( 2, aStatus:Count )
+            Assert.Equal( "", aStatus[0] )
+            Assert.Equal( "", aStatus[1] )
+            VAR aNames := oTable:OrderNames()
+            Assert.Equal( 2, aNames:Count )
+            Assert.DoesNotContain( "BYNAME", aNames )
+            Assert.Equal( 1, oTable:ReIndex():Done )
+            oTable:Close()
+        FINALLY
+            oData:Dispose()
+        END TRY
+        RETURN
+
+    [Fact];
+    PUBLIC METHOD Zap_RemovesAllRecords() AS VOID
+        VAR oData := TestData{}
+        TRY
+            VAR oTable := OpenTable( CreateCab( oData ), TRUE )
+            Assert.Equal( 3L, oTable:RecordCount() )
+            Assert.Equal( 1, oTable:Zap():Done )
+            Assert.Equal( 0L, oTable:RecordCount() )
+            oTable:LoadList()
+            Assert.Equal( 0, oTable:Recs:Count )
+            oTable:Close()
+        FINALLY
+            oData:Dispose()
+        END TRY
+        RETURN
+
+    [Fact];
+    PUBLIC METHOD CanRestructure_IsFalseWhenSharedOrReadOnly() AS VOID
+        VAR oData := TestData{}
+        TRY
+            LOCAL cFile := CreateCab( oData ) AS STRING
+            VAR oShared := OpenTable( cFile, FALSE )
+            Assert.False( oShared:CanRestructure )
+            oShared:Close()
+            LOCAL oRo := DbfTable{} AS DbfTable
+            LOCAL cError := "" AS STRING
+            Assert.True( oRo:Open( cFile, "DBFCDX", TRUE, TRUE, REF cError ), cError )
+            Assert.False( oRo:CanRestructure )
+            oRo:Close()
+        FINALLY
+            oData:Dispose()
+        END TRY
+        RETURN
+
     [Fact];
     PUBLIC METHOD WriteMemo_StoresTextAndAllowsUndo() AS VOID
         VAR oData := TestData{}

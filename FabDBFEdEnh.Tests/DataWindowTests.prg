@@ -94,6 +94,40 @@ PUBLIC CLASS DataWindowTests
         END TRY
         RETURN
 
+    [Fact];
+    PUBLIC METHOD OrderScopeAndFilter_WorkThroughTheWindow() AS VOID
+        RunSta( { => DataWindowTests.OrderScopeFilter() } )
+        RETURN
+
+    PRIVATE STATIC METHOD OrderScopeFilter() AS VOID
+        VAR oData := TestData{}
+        TRY
+            LOCAL aFields := <RddFieldInfo>{ TestData.Field( "NAME", "C", 10, 0 ), TestData.Field( "QTY", "N", 5, 0 ) } AS RddFieldInfo[]
+            LOCAL cFile := oData:CreateTable( "ord", aFields ) AS STRING
+            oData:Append( cFile, <OBJECT>{ "C", 1 } )
+            oData:Append( cFile, <OBJECT>{ "A", 2 } )
+            oData:Append( cFile, <OBJECT>{ "B", 3 } )
+            LOCAL oWin := DataWindow{} AS DataWindow
+            Assert.True( oWin:OpenFile( cFile, "DBFCDX", TRUE, FALSE, TRUE, FALSE, TRUE, FALSE ) )
+            Assert.False( oWin:HasOrder )
+            // a new order becomes the active one in the combo box
+            Assert.True( oWin:NewOrder( "BYNAME", "NAME", "", FALSE ) )
+            Assert.True( oWin:HasOrder )
+            Assert.Equal( 1, oWin:GetOrders():Count )
+            // scope A..B hides C; the filter then keeps QTY > 2 (only B)
+            Assert.True( oWin:SetScope( "A", "B" ) )
+            Assert.Equal( "A", oWin:ScopeFrom )
+            Assert.True( oWin:SetFilter( "QTY > 2" ) )
+            Assert.Equal( "QTY > 2", oWin:FilterText )
+            Assert.True( oWin:SetFilter( "" ) )
+            Assert.Equal( "", oWin:FilterText )
+            oWin:Close()
+            oWin:Dispose()
+        FINALLY
+            oData:Dispose()
+        END TRY
+        RETURN
+
 END CLASS
 
 END NAMESPACE
