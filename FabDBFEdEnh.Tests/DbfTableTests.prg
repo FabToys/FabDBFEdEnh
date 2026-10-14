@@ -796,6 +796,128 @@ PUBLIC CLASS DbfTableTests
         END TRY
         RETURN
 
+    // ------------------------------------------------------------------
+    // Wild seek
+    // ------------------------------------------------------------------
+    [Fact];
+    PUBLIC METHOD WildMatchText_FollowsTheChosenMode() AS VOID
+        // contains (case does not matter, trailing blanks ignored)
+        Assert.True( DbfTable.WildMatchText( "Anchor Plastic   ", "plast", DbfTable.WildContains ) )
+        Assert.False( DbfTable.WildMatchText( "Anchor Plastic", "xyz", DbfTable.WildContains ) )
+        // begins with
+        Assert.True( DbfTable.WildMatchText( "Anchor Plastic", "ANCH", DbfTable.WildBegins ) )
+        Assert.False( DbfTable.WildMatchText( "Anchor Plastic", "plastic", DbfTable.WildBegins ) )
+        // exact: the whole field
+        Assert.True( DbfTable.WildMatchText( "Texas     ", "texas", DbfTable.WildExact ) )
+        Assert.False( DbfTable.WildMatchText( "Texas", "tex", DbfTable.WildExact ) )
+        // pattern
+        Assert.True( DbfTable.WildMatchText( "Billy Bob Electrical", "b*electr*", DbfTable.WildPattern ) )
+        Assert.False( DbfTable.WildMatchText( "Billy Bob Electrical", "electr*", DbfTable.WildPattern ) )
+        Assert.False( DbfTable.WildMatchText( NULL, "x", DbfTable.WildContains ) )
+        RETURN
+
+    [Fact];
+    PUBLIC METHOD Glob_StarQuestionMarkAndBacktracking() AS VOID
+        Assert.True( DbfTable.Glob( "ABC", "A*C" ) )
+        Assert.True( DbfTable.Glob( "AC", "A*C" ) )
+        Assert.True( DbfTable.Glob( "ABC", "A?C" ) )
+        Assert.False( DbfTable.Glob( "AC", "A?C" ) )
+        Assert.True( DbfTable.Glob( "ABCBC", "A*BC" ) )               // needs backtracking
+        Assert.True( DbfTable.Glob( "ANYTHING", "*" ) )
+        Assert.True( DbfTable.Glob( "", "*" ) )
+        Assert.False( DbfTable.Glob( "ABC", "AB" ) )
+        Assert.False( DbfTable.Glob( "AB", "ABC" ) )
+        Assert.True( DbfTable.Glob( "ABC", "***ABC***" ) )
+        RETURN
+
+    [Fact];
+    PUBLIC METHOD WildFieldText_UsesTheDisplayedText() AS VOID
+        Assert.Equal( "12.50", DbfTable.WildFieldText( 12.5, "N", 2 ) )
+        Assert.Equal( "T", DbfTable.WildFieldText( TRUE, "L", 0 ) )
+        Assert.Equal( "", DbfTable.WildFieldText( DateTime.MinValue, "D", 0 ) )
+        Assert.Equal( "", DbfTable.WildFieldText( NULL, "C", 0 ) )
+        Assert.Equal( "abc", DbfTable.WildFieldText( "abc   ", "C", 0 ) )
+        Assert.Equal( "", DbfTable.WildFieldText( BYTE[]{ 3 }, "M", 0 ) )
+        RETURN
+
+    [Fact];
+    PUBLIC METHOD WildSeek_RestrictsTheViewToMatchingRecords() AS VOID
+        VAR oData := TestData{}
+        TRY
+            LOCAL aFields := <RddFieldInfo>{ TestData.Field( "NAME", "C", 20, 0 ), TestData.Field( "CITY", "C", 20, 0 ), ;
+                TestData.Field( "NOTE", "M", 10, 0 ) } AS RddFieldInfo[]
+            LOCAL cFile := oData:CreateTable( "wild", aFields ) AS STRING
+            oData:Append( cFile, <OBJECT>{ "Anchor Plastic", "Temple", "good customer" } )
+            oData:Append( cFile, <OBJECT>{ "Billy Bob", "Yukon", "late payer" } )
+            oData:Append( cFile, <OBJECT>{ "Craig Tucker", "Temple", "" } )
+            oData:Append( cFile, <OBJECT>{ "Patty", "Trinton", "likes plastic" } )
+            VAR oTable := OpenTable( cFile, TRUE )
+            // all fields (memos not searched): "temple" is in the CITY of records 1 and 3
+            oTable:SetWild( "temple", -1, DbfTable.WildContains, FALSE )
+            oTable:LoadList()
+            Assert.Equal( 2, oTable:Recs:Count )
+            Assert.Equal( 1L, oTable:Recs[0] )
+            Assert.Equal( 3L, oTable:Recs[1] )
+            // "plastic" is in NAME of record 1 and only in the MEMO of record 4
+            oTable:SetWild( "plastic", -1, DbfTable.WildContains, FALSE )
+            oTable:LoadList()
+            Assert.Single( oTable:Recs )
+            oTable:SetWild( "plastic", -1, DbfTable.WildContains, TRUE )
+            oTable:LoadList()
+            Assert.Equal( 2, oTable:Recs:Count )
+            // one field only: NAME does not contain "temple"
+            oTable:SetWild( "temple", 0, DbfTable.WildContains, FALSE )
+            oTable:LoadList()
+            Assert.Empty( oTable:Recs )
+            // one field, begins with
+            oTable:SetWild( "b", 0, DbfTable.WildBegins, FALSE )
+            oTable:LoadList()
+            Assert.Single( oTable:Recs )
+            Assert.Equal( 2L, oTable:Recs[0] )
+            // a memo field chosen explicitly is searched even without the memo option
+            oTable:SetWild( "late", 2, DbfTable.WildContains, FALSE )
+            oTable:LoadList()
+            Assert.Single( oTable:Recs )
+            // off again
+            oTable:ClearWild()
+            oTable:LoadList()
+            Assert.Equal( 4, oTable:Recs:Count )
+            oTable:Close()
+        FINALLY
+            oData:Dispose()
+        END TRY
+        RETURN
+
+    [Fact];
+    PUBLIC METHOD WildSeek_IsCombinedWithFilterAndDeletedHandling() AS VOID
+        VAR oData := TestData{}
+        TRY
+            VAR oTable := OpenTable( CreateFive( oData ), TRUE )
+            oTable:SetFilter( "QTY >= 3" )                               // C, D, E ... as records 3, 4, 5
+            oTable:SetWild( "d", 0, DbfTable.WildContains, FALSE )
+            oTable:LoadList()
+            Assert.Single( oTable:Recs )
+            Assert.Equal( 4L, oTable:Recs[0] )
+            // a deleted record is hidden like before, and shown when deleted records are shown
+            oTable:SetDeleted( 4, TRUE )
+            oTable:LoadList()
+            Assert.Empty( oTable:Recs )
+            oTable:ShowDeleted := TRUE
+            oTable:LoadList()
+            Assert.Single( oTable:Recs )
+            // numbers are searched as shown: QTY 3 is "3.00" with two decimals? here 0 decimals: "3"
+            oTable:SetFilter( "" )
+            oTable:ShowDeleted := FALSE
+            oTable:SetWild( "3", 1, DbfTable.WildExact, FALSE )
+            oTable:LoadList()
+            Assert.Single( oTable:Recs )
+            Assert.Equal( 3L, oTable:Recs[0] )
+            oTable:Close()
+        FINALLY
+            oData:Dispose()
+        END TRY
+        RETURN
+
     [Fact];
     PUBLIC METHOD WriteMemo_StoresTextAndAllowsUndo() AS VOID
         VAR oData := TestData{}

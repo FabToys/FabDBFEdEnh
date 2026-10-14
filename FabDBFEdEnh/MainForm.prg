@@ -143,6 +143,8 @@ PUBLIC CLASS MainForm INHERIT System.Windows.Forms.Form
         SELF:AddSeparator( m )
         SELF:Entry( m, "Set Filter",      Keys.None, EventHandler{ SELF, @M_Filter() } )
         SELF:Entry( m, "Set Order Scope", Keys.None, EventHandler{ SELF, @M_Scope() } )
+        SELF:Entry( m, "Wild Seek...",    KeyOf( Keys.W, TRUE, FALSE, FALSE ), EventHandler{ SELF, @M_WildSeek() } )
+        SELF:Entry( m, "Clear Wild Seek", Keys.None, EventHandler{ SELF, @M_ClearWild() } )
         SELF:mOnlyDeleted := SELF:Entry( m, "View Deleted Records Only", Keys.None, EventHandler{ SELF, @M_OnlyDeleted() } )
         SELF:Entry( m, "View All Records", Keys.None, EventHandler{ SELF, @M_AllRecords() } )
         SELF:AddSeparator( m )
@@ -880,11 +882,25 @@ PUBLIC CLASS MainForm INHERIT System.Windows.Forms.Form
         LOCAL oDW := SELF:ActiveWindow() AS DataWindow
         IF oDW != NULL
             LOCAL dlg := InputDialog{ "Set Filter", ;
-                "Expression in X#/VO syntax, e.g.  STATUS != 'X'  or  ORDERDATE >= CToD('01.01.2026').  Empty = filter oDWf.", ;
+                "Expression in X#/VO syntax, e.g.  STATUS != 'X'  or  ORDERDATE >= CToD('01.01.2026').  Empty = filter off.", ;
                 <STRING>{ "Filter" }, <STRING>{ oDW:FilterText }, "", FALSE } AS InputDialog
             IF dlg:ShowDialog( SELF ) == DialogResult.OK
                 oDW:SetFilter( dlg:InputValue( 0 ) )
             ENDIF
+        ENDIF
+        RETURN
+
+    PRIVATE METHOD M_WildSeek( sender AS OBJECT, e AS EventArgs ) AS VOID
+        LOCAL oDW := SELF:ActiveWindow() AS DataWindow
+        IF oDW != NULL
+            oDW:WildSeek()
+        ENDIF
+        RETURN
+
+    PRIVATE METHOD M_ClearWild( sender AS OBJECT, e AS EventArgs ) AS VOID
+        LOCAL oDW := SELF:ActiveWindow() AS DataWindow
+        IF oDW != NULL
+            oDW:ClearWildSeek()
         ENDIF
         RETURN
 

@@ -250,6 +250,7 @@ PUBLIC CLASS DataWindow INHERIT System.Windows.Forms.Form
         LOCAL nTotal := SELF:oTable:RecordCount() AS LONG
         SELF:Text := cName + " (" + Convert.ToString( nTotal ) + " Records  ANSI-" + SELF:Mode + ")" + ;
             IIF( SELF:cFilterText:Length > 0, "  FILTER", "" ) + IIF( SELF:oScopeFrom != NULL .OR. SELF:oScopeTo != NULL, "  SCOPE", "" ) + ;
+            IIF( SELF:oTable:WildText:Length > 0, "  WILD", "" ) + ;
             IIF( SELF:aRecs:Count < nTotal, "  [" + Convert.ToString( SELF:aRecs:Count ) + " shown]", "" )
         RETURN
 
@@ -939,8 +940,8 @@ PUBLIC CLASS DataWindow INHERIT System.Windows.Forms.Form
             RETURN
         ENDIF
         LOCAL cInfo := "" AS STRING
-        IF SELF:oFilterCb != NULL .OR. SELF:oScopeFrom != NULL .OR. SELF:oScopeTo != NULL
-            cInfo := " (filter / scope active)"
+        IF SELF:oFilterCb != NULL .OR. SELF:oScopeFrom != NULL .OR. SELF:oScopeTo != NULL .OR. SELF:oTable:WildText:Length > 0
+            cInfo := " (filter / scope / wild seek active)"
         ENDIF
         IF MessageBox.Show( Convert.ToString( SELF:aRecs:Count ) + " record(s) of the current view" + cInfo + " will be deleted. Continue?", ;
             "Scoped Delete", MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2 ) != DialogResult.Yes
@@ -1331,6 +1332,50 @@ PUBLIC CLASS DataWindow INHERIT System.Windows.Forms.Form
         RETURN TRUE
 
     // =====================================================================
+    // Wild seek
+    // =====================================================================
+    PUBLIC PROPERTY WildText AS STRING GET SELF:oTable:WildText
+
+    /// <summary>Wild seek: show only the records where the text is found, in one field (0-based index) or in all of them
+    /// (-1). nMode is one of DbfTable.WildContains / WildBegins / WildExact / WildPattern. Empty text switches it off.
+    /// Returns the number of records in the view.</summary>
+    PUBLIC METHOD SetWildSeek( cText AS STRING, nField AS INT, nMode AS INT, lMemos AS LOGIC ) AS INT
+        LOCAL nRec := SELF:CurrentRec() AS LONG
+        SELF:Cursor := Cursors.WaitCursor
+        TRY
+            SELF:SyncOrder()
+            SELF:oTable:SetWild( cText, nField, nMode, lMemos )
+            SELF:LoadList( nRec )
+        FINALLY
+            SELF:Cursor := Cursors.Default
+        END TRY
+        RETURN SELF:aRecs:Count
+
+    PUBLIC METHOD ClearWildSeek() AS VOID
+        IF SELF:oTable:WildText:Length > 0
+            SELF:SetWildSeek( "", -1, DbfTable.WildContains, FALSE )
+        ENDIF
+        RETURN
+
+    /// <summary>View - Wild Seek: asks for the text and the field, then restricts the view</summary>
+    PUBLIC METHOD WildSeek() AS VOID
+        LOCAL dlg := WildSeekDialog{ SELF:aFieldName, SELF:oTable:WildText, SELF:oTable:WildField, SELF:oTable:WildMode, SELF:oTable:WildMemos } AS WildSeekDialog
+        IF dlg:ShowDialog( SELF ) != DialogResult.OK
+            RETURN
+        ENDIF
+        IF dlg:ClearRequested .OR. dlg:SearchText:Length == 0
+            SELF:ClearWildSeek()
+            RETURN
+        ENDIF
+        LOCAL nFound := SELF:SetWildSeek( dlg:SearchText, dlg:FieldIndex, dlg:Mode, dlg:IncludeMemos ) AS INT
+        IF nFound == 0
+            MessageBox.Show( "No record matches " + Convert.ToChar( 34 ):ToString() + dlg:SearchText + Convert.ToChar( 34 ):ToString() + "." + ;
+                Environment.NewLine + "The view is empty; use Wild Seek - Clear to show the records again.", "Wild Seek", ;
+                MessageBoxButtons.OK, MessageBoxIcon.Information )
+        ENDIF
+        RETURN
+
+    // =====================================================================
     // Index management (Index Manager)
     // =====================================================================
     /// <summary>List of the orders: name, expression, condition, index file</summary>
@@ -1674,7 +1719,7 @@ PUBLIC CLASS DataWindow INHERIT System.Windows.Forms.Form
     /// <summary>Utils - Export JSON: asks for the file (and, for a restricted view, for the record set)</summary>
     PUBLIC METHOD ExportJson() AS VOID
         LOCAL lAll := FALSE AS LOGIC
-        IF SELF:cFilterText:Length > 0 .OR. SELF:oScopeFrom != NULL .OR. SELF:oScopeTo != NULL .OR. SELF:lOnlyDeleted .OR. ! SELF:lShowDeleted
+        IF SELF:cFilterText:Length > 0 .OR. SELF:oScopeFrom != NULL .OR. SELF:oScopeTo != NULL .OR. SELF:oTable:WildText:Length > 0 .OR. SELF:lOnlyDeleted .OR. ! SELF:lShowDeleted
             SELF:Sel()
             LOCAL answer := MessageBox.Show( "The current view is restricted (filter, scope or hidden deleted records)." + Environment.NewLine + Environment.NewLine + ;
                 "Yes = export the " + Convert.ToString( SELF:aRecs:Count ) + " records of the current view" + Environment.NewLine + ;
@@ -1715,7 +1760,7 @@ PUBLIC CLASS DataWindow INHERIT System.Windows.Forms.Form
     PUBLIC METHOD GenerateCreateScript() AS VOID
         LOCAL cName := Path.GetFileNameWithoutExtension( SELF:cFile ) AS STRING
         SELF:SyncOrder()
-        LOCAL lRestricted := SELF:cFilterText:Length > 0 .OR. SELF:oScopeFrom != NULL .OR. SELF:oScopeTo != NULL AS LOGIC
+        LOCAL lRestricted := SELF:cFilterText:Length > 0 .OR. SELF:oScopeFrom != NULL .OR. SELF:oScopeTo != NULL .OR. SELF:oTable:WildText:Length > 0 AS LOGIC
         LOCAL dlg := ScriptDialog{ cName, SELF:oTable:OrderNames():Count > 0, lRestricted, SELF:oTable:RecordCount(), SELF:aRecs:Count } AS ScriptDialog
         IF dlg:ShowDialog( SELF ) != DialogResult.OK
             RETURN

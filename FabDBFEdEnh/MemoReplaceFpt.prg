@@ -492,4 +492,138 @@ PUBLIC CLASS ReplaceDialog INHERIT System.Windows.Forms.Form
         RETURN l
 END CLASS
 
+
+/// <summary>Wild Seek: text, field (or all fields) and the way the text is compared</summary>
+PUBLIC CLASS WildSeekDialog INHERIT System.Windows.Forms.Form
+    PRIVATE txtText   AS TextBox
+    PRIVATE cmbField  AS ComboBox
+    PRIVATE rbContains AS RadioButton
+    PRIVATE rbBegins  AS RadioButton
+    PRIVATE rbExact   AS RadioButton
+    PRIVATE rbPattern AS RadioButton
+    PRIVATE chkMemos  AS CheckBox
+    PUBLIC  ClearRequested := FALSE AS LOGIC
+
+    PUBLIC PROPERTY SearchText  AS STRING GET SELF:txtText:Text
+    /// <summary>0-based field index, -1 = all fields</summary>
+    PUBLIC PROPERTY FieldIndex  AS INT    GET SELF:cmbField:SelectedIndex - 1
+    PUBLIC PROPERTY IncludeMemos AS LOGIC GET SELF:chkMemos:Checked
+    PUBLIC PROPERTY Mode AS INT
+        GET
+            IF SELF:rbBegins:Checked
+                RETURN DbfTable.WildBegins
+            ELSEIF SELF:rbExact:Checked
+                RETURN DbfTable.WildExact
+            ELSEIF SELF:rbPattern:Checked
+                RETURN DbfTable.WildPattern
+            ENDIF
+            RETURN DbfTable.WildContains
+        END GET
+    END PROPERTY
+
+    PUBLIC CONSTRUCTOR( aFields AS List<STRING>, cText AS STRING, nField AS INT, nMode AS INT, lMemos AS LOGIC )
+        SELF:Text            := "Wild Seek"
+        SELF:FormBorderStyle := FormBorderStyle.FixedDialog
+        SELF:StartPosition   := FormStartPosition.CenterParent
+        SELF:MaximizeBox     := FALSE
+        SELF:MinimizeBox     := FALSE
+        SELF:ShowInTaskbar   := FALSE
+        SELF:Font            := Font{ "Microsoft Sans Serif", 8.25 }
+        SELF:ClientSize      := Size{ 470, 276 }
+
+        SELF:Controls:Add( SELF:Caption( "Find", 15 ) )
+        SELF:txtText := TextBox{}
+        SELF:txtText:Location := Point{ 110, 12 }
+        SELF:txtText:Size := Size{ 345, 20 }
+        SELF:txtText:Text := cText
+        SELF:Controls:Add( SELF:txtText )
+
+        SELF:Controls:Add( SELF:Caption( "In field", 45 ) )
+        SELF:cmbField := ComboBox{}
+        SELF:cmbField:DropDownStyle := ComboBoxStyle.DropDownList
+        SELF:cmbField:Location := Point{ 110, 42 }
+        SELF:cmbField:Size := Size{ 200, 21 }
+        SELF:cmbField:Items:Add( "<All fields>" )
+        FOREACH cF AS STRING IN aFields
+            SELF:cmbField:Items:Add( cF )
+        NEXT
+        SELF:cmbField:SelectedIndex := IIF( nField >= 0 .AND. nField < aFields:Count, nField + 1, 0 )
+        SELF:Controls:Add( SELF:cmbField )
+
+        SELF:Controls:Add( SELF:Caption( "Match", 80 ) )
+        SELF:rbContains := SELF:Radio( "contains the text", 78 )
+        SELF:rbBegins   := SELF:Radio( "begins with the text", 100 )
+        SELF:rbExact    := SELF:Radio( "is exactly the text (whole field)", 122 )
+        SELF:rbPattern  := SELF:Radio( "matches a pattern:  *  any text,  ?  one character", 144 )
+        DO CASE
+        CASE nMode == DbfTable.WildBegins
+            SELF:rbBegins:Checked := TRUE
+        CASE nMode == DbfTable.WildExact
+            SELF:rbExact:Checked := TRUE
+        CASE nMode == DbfTable.WildPattern
+            SELF:rbPattern:Checked := TRUE
+        OTHERWISE
+            SELF:rbContains:Checked := TRUE
+        ENDCASE
+
+        SELF:chkMemos := CheckBox{}
+        SELF:chkMemos:Text := "also search the memo fields when all fields are searched (slow)"
+        SELF:chkMemos:Location := Point{ 110, 174 }
+        SELF:chkMemos:AutoSize := TRUE
+        SELF:chkMemos:Checked := lMemos
+        SELF:Controls:Add( SELF:chkMemos )
+
+        LOCAL lblHint := Label{} AS Label
+        lblHint:Text := "Case does not matter. Dates and numbers are searched as they are shown. The result is combined " + ;
+            "with the filter, the scope and the deleted records setting of the window."
+        lblHint:Location := Point{ 110, 202 }
+        lblHint:Size := Size{ 350, 44 }
+        SELF:Controls:Add( lblHint )
+
+        LOCAL bClear := Button{} AS Button
+        bClear:Text := "Clear"
+        bClear:Location := Point{ 12, 240 }
+        bClear:Size := Size{ 80, 26 }
+        bClear:Click += EventHandler{ SELF, @Clear_Click() }
+        SELF:Controls:Add( bClear )
+
+        LOCAL bOk := Button{} AS Button
+        bOk:Text := "Seek"
+        bOk:Location := Point{ 290, 240 }
+        bOk:Size := Size{ 80, 26 }
+        bOk:DialogResult := DialogResult.OK
+        SELF:Controls:Add( bOk )
+
+        LOCAL bCancel := Button{} AS Button
+        bCancel:Text := "Cancel"
+        bCancel:Location := Point{ 376, 240 }
+        bCancel:Size := Size{ 80, 26 }
+        bCancel:DialogResult := DialogResult.Cancel
+        SELF:Controls:Add( bCancel )
+
+        SELF:AcceptButton := bOk
+        SELF:CancelButton := bCancel
+        RETURN
+
+    PRIVATE METHOD Clear_Click( sender AS OBJECT, e AS EventArgs ) AS VOID
+        SELF:ClearRequested := TRUE
+        SELF:DialogResult := DialogResult.OK
+        RETURN
+
+    PRIVATE METHOD Radio( cText AS STRING, nY AS INT ) AS RadioButton
+        LOCAL rb := RadioButton{} AS RadioButton
+        rb:Text := cText
+        rb:Location := Point{ 110, nY }
+        rb:AutoSize := TRUE
+        SELF:Controls:Add( rb )
+        RETURN rb
+
+    PRIVATE METHOD Caption( cText AS STRING, nY AS INT ) AS Label
+        LOCAL l := Label{} AS Label
+        l:Text := cText
+        l:Location := Point{ 12, nY }
+        l:AutoSize := TRUE
+        RETURN l
+END CLASS
+
 END NAMESPACE

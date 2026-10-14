@@ -24,6 +24,10 @@ source code and JSON export of a table, and a JSON export that makes the content
 - Typed input for character, numeric, integer, date, DateTime, logical, currency, double and float fields
 - **Form view** (one record, all fields) and table view, choose the visible fields
 - Go to record number, **seek** in the active index, **filter** expression, **scope** on the active order, show / hide deleted records
+- **Wild Seek** (`Ctrl+W`): find a text in one field or in all fields and show only the matching records. The text may be
+  contained in the field, start the field, be the whole field, or be a pattern with `*` and `?`; case does not matter,
+  dates and numbers are searched as they are shown. Memo fields can be included. The result is combined with the filter,
+  scope and deleted-records setting, and the window caption shows `WILD` until you clear it
 - **DBClipboard**: copy or **cut** records (also additive) and paste them over a record or append them
 
 ### Memo and binary data
@@ -66,6 +70,7 @@ source code and JSON export of a table, and a JSON export that makes the content
 | `Ctrl+C` copy record | `Ctrl+Alt+C` copy additive | `Ctrl+X` cut record | `Ctrl+Alt+X` cut additive |
 | `Ctrl+V` paste | `Ctrl+Alt+A` paste append | `Ctrl+Alt+L` paste append all | `Ctrl+Z` undo |
 | `F5` refresh | `F12` commit | `Ctrl+O` open | `Ctrl+N` new |
+| `Ctrl+W` wild seek | | | |
 
 ## Feature status
 
@@ -93,6 +98,7 @@ Everything in the menu, and what is still missing.
 | | Hex View | ✅ | current record, read from the file |
 | **View** | Form / Browse | ✅ | |
 | | Set Filter, Set Order Scope | ✅ | needs the X# macro compiler |
+| | Wild Seek, Clear Wild Seek | ✅ | one field or all fields; contains / begins / exact / `*` `?` pattern; optional memos |
 | | View Deleted Records Only / All Records | ✅ | |
 | | Select Fields | ✅ | |
 | **DBClipboard** | Copy, Copy Additive, Cut, Cut Additive | ✅ | |

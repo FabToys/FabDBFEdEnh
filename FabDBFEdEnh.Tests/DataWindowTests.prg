@@ -95,6 +95,36 @@ PUBLIC CLASS DataWindowTests
         RETURN
 
     [Fact];
+    PUBLIC METHOD WildSeek_WorksThroughTheWindow() AS VOID
+        RunSta( { => DataWindowTests.WildSeekOnWindow() } )
+        RETURN
+
+    PRIVATE STATIC METHOD WildSeekOnWindow() AS VOID
+        VAR oData := TestData{}
+        TRY
+            LOCAL aFields := <RddFieldInfo>{ TestData.Field( "NAME", "C", 10, 0 ), TestData.Field( "QTY", "N", 5, 0 ) } AS RddFieldInfo[]
+            LOCAL cFile := oData:CreateTable( "seekwin", aFields ) AS STRING
+            oData:Append( cFile, <OBJECT>{ "Alpha", 1 } )
+            oData:Append( cFile, <OBJECT>{ "Beta", 2 } )
+            oData:Append( cFile, <OBJECT>{ "Gamma", 3 } )
+            LOCAL oWin := DataWindow{} AS DataWindow
+            Assert.True( oWin:OpenFile( cFile, "DBFCDX", TRUE, FALSE, TRUE, FALSE, TRUE, FALSE ) )
+            Assert.Equal( 3, oWin:SetWildSeek( "a", -1, DbfTable.WildContains, FALSE ) )     // Alpha, Beta, Gamma all contain an a
+            Assert.Equal( 1, oWin:SetWildSeek( "et", -1, DbfTable.WildContains, FALSE ) )    // Beta
+            Assert.Equal( "et", oWin:WildText )
+            Assert.Contains( "WILD", oWin:Text )
+            Assert.Equal( 1, oWin:SetWildSeek( "g*", 0, DbfTable.WildPattern, FALSE ) )
+            oWin:ClearWildSeek()
+            Assert.Equal( "", oWin:WildText )
+            Assert.DoesNotContain( "WILD", oWin:Text )
+            oWin:Close()
+            oWin:Dispose()
+        FINALLY
+            oData:Dispose()
+        END TRY
+        RETURN
+
+    [Fact];
     PUBLIC METHOD OrderScopeAndFilter_WorkThroughTheWindow() AS VOID
         RunSta( { => DataWindowTests.OrderScopeFilter() } )
         RETURN

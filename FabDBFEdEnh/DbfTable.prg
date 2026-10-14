@@ -76,6 +76,18 @@ PUBLIC CLASS DbfTable
     PUBLIC PROPERTY ScopeTo       AS OBJECT AUTO
     PUBLIC PROPERTY ScopeFromText AS STRING AUTO := ""
     PUBLIC PROPERTY ScopeToText   AS STRING AUTO := ""
+    // --- Wild seek: text search in one field or in all fields; the view shows only the matching records ---
+    PUBLIC CONST WildContains := 0 AS INT
+    PUBLIC CONST WildBegins   := 1 AS INT
+    PUBLIC CONST WildExact    := 2 AS INT
+    PUBLIC CONST WildPattern  := 3 AS INT      // * = any text, ? = one character
+    /// <summary>Text to find, "" = wild seek off</summary>
+    PUBLIC PROPERTY WildText  AS STRING AUTO := ""
+    /// <summary>0-based field index, -1 = all fields</summary>
+    PUBLIC PROPERTY WildField AS INT    AUTO := -1
+    PUBLIC PROPERTY WildMode  AS INT    AUTO := 0
+    /// <summary>Also look into memo fields (slow on large files)</summary>
+    PUBLIC PROPERTY WildMemos AS LOGIC  AUTO
     /// <summary>TRUE = commit and unlock after each write</summary>
     PUBLIC PROPERTY AutoCommit AS LOGIC AUTO
     /// <summary>The last LoadList stopped because the active index seems to loop</summary>
@@ -280,6 +292,9 @@ PUBLIC CLASS DbfTable
                 CATCH
                     lOk := FALSE
                 END TRY
+            ENDIF
+            IF lOk .AND. SELF:WildText:Length > 0
+                lOk := SELF:WildMatchRecord()
             ENDIF
             IF lOk
                 SELF:Recs:Add( (LONG) RecNo() )
@@ -1014,6 +1029,122 @@ PUBLIC CLASS DbfTable
             oResult:Error   := "Invalid scope value: " + ex:Message
         END TRY
         RETURN oResult
+
+    /// <summary>Set the wild seek (empty text = off). Does not reload the list.</summary>
+    PUBLIC METHOD SetWild( cText AS STRING, nField AS INT, nMode AS INT, lMemos AS LOGIC ) AS VOID
+        SELF:WildText  := cText
+        SELF:WildField := IIF( nField >= 0 .AND. nField < SELF:aName:Count, nField, -1 )
+        SELF:WildMode  := nMode
+        SELF:WildMemos := lMemos
+        RETURN
+
+    PUBLIC METHOD ClearWild() AS VOID
+        SELF:WildText := ""
+        RETURN
+
+    /// <summary>TRUE when the text matches the pattern. Case does not matter; trailing blanks of the text are ignored.</summary>
+    PUBLIC STATIC METHOD WildMatchText( cText AS STRING, cPattern AS STRING, nMode AS INT ) AS LOGIC
+        IF cText == NULL
+            RETURN FALSE
+        ENDIF
+        LOCAL t := cText:TrimEnd():ToUpperInvariant() AS STRING
+        LOCAL p := cPattern:ToUpperInvariant() AS STRING
+        DO CASE
+        CASE nMode == DbfTable.WildBegins
+            RETURN t:StartsWith( p, StringComparison.Ordinal )
+        CASE nMode == DbfTable.WildExact
+            RETURN String.Equals( t, p:TrimEnd(), StringComparison.Ordinal )
+        CASE nMode == DbfTable.WildPattern
+            RETURN DbfTable.Glob( t, p )
+        ENDCASE
+        RETURN t:IndexOf( p, StringComparison.Ordinal ) >= 0
+
+    /// <summary>Whole-text match with * (any text) and ? (any single character); no regular expressions</summary>
+    PUBLIC STATIC METHOD Glob( cText AS STRING, cPattern AS STRING ) AS LOGIC
+        LOCAL nText := 0, nPat := 0 AS INT
+        LOCAL nStar := -1, nBack := 0 AS INT
+        DO WHILE nText < cText:Length
+            IF nPat < cPattern:Length .AND. ( cPattern[nPat] == (CHAR) 63 .OR. cPattern[nPat] == cText[nText] )
+                nText++
+                nPat++
+            ELSEIF nPat < cPattern:Length .AND. cPattern[nPat] == (CHAR) 42
+                nStar := nPat
+                nBack := nText
+                nPat++
+            ELSEIF nStar >= 0
+                nPat  := nStar + 1
+                nBack++
+                nText := nBack
+            ELSE
+                RETURN FALSE
+            ENDIF
+        ENDDO
+        DO WHILE nPat < cPattern:Length .AND. cPattern[nPat] == (CHAR) 42
+            nPat++
+        ENDDO
+        RETURN nPat == cPattern:Length
+
+    /// <summary>The text of a field value as the grid shows it: dates in the configured format, numbers with their
+    /// decimals, logical as T / F. "" for empty values and binary data.</summary>
+    PUBLIC STATIC METHOD WildFieldText( oValue AS OBJECT, cType AS STRING, nDec AS INT ) AS STRING
+        IF oValue == NULL .OR. oValue IS System.DBNull .OR. oValue IS BYTE[]
+            RETURN ""
+        ENDIF
+        IF oValue IS IDate
+            LOCAL oDate := (IDate) oValue AS IDate
+            IF oDate:IsEmpty
+                RETURN ""
+            ENDIF
+            RETURN AppSettings.DateText( DateTime{ oDate:Year, oDate:Month, oDate:Day } )
+        ENDIF
+        IF oValue IS DateTime
+            LOCAL d := (DateTime) oValue AS DateTime
+            IF d == DateTime.MinValue
+                RETURN ""
+            ENDIF
+            IF cType == "T"
+                RETURN AppSettings.DateText( d ) + " " + d:ToString( "HH:mm:ss", CultureInfo.InvariantCulture )
+            ENDIF
+            RETURN AppSettings.DateText( d )
+        ENDIF
+        IF oValue IS LOGIC
+            RETURN IIF( (LOGIC) oValue, "T", "F" )
+        ENDIF
+        IF cType == "N" .OR. cType == "F" .OR. cType == "Y" .OR. cType == "B"
+            TRY
+                RETURN Convert.ToDouble( oValue ):ToString( "F" + Convert.ToString( nDec ), CultureInfo.InvariantCulture )
+            CATCH
+                NOP
+            END TRY
+        ENDIF
+        RETURN oValue:ToString():TrimEnd()
+
+    /// <summary>Does the current record match the wild seek? (called while LoadList walks the file)</summary>
+    PRIVATE METHOD WildMatchRecord() AS LOGIC
+        LOCAL nFirst := 0 AS INT
+        LOCAL nLast  := SELF:aName:Count - 1 AS INT
+        IF SELF:WildField >= 0
+            nFirst := SELF:WildField
+            nLast  := SELF:WildField
+        ENDIF
+        FOR VAR i := nFirst TO nLast
+            IF SELF:aType[i] == "M" .AND. ! SELF:WildMemos .AND. SELF:WildField < 0
+                LOOP                                          // memos only when asked for (or when chosen as the field)
+            ENDIF
+            IF SELF:aBinary[i]
+                LOOP
+            ENDIF
+            LOCAL oValue := NULL AS OBJECT
+            TRY
+                oValue := SELF:oRdd:GetValue( i + 1 )
+            CATCH
+                LOOP
+            END TRY
+            IF DbfTable.WildMatchText( DbfTable.WildFieldText( oValue, SELF:aType[i], SELF:aDec[i] ), SELF:WildText, SELF:WildMode )
+                RETURN TRUE
+            ENDIF
+        NEXT
+        RETURN FALSE
 
     /// <summary>The scope only applies to the order it was set for</summary>
     PUBLIC METHOD ClearScope() AS VOID
