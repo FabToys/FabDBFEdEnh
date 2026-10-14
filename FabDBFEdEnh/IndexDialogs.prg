@@ -3,7 +3,7 @@ USING System.Drawing
 USING System.Collections.Generic
 USING System.Windows.Forms
 
-BEGIN NAMESPACE FabDBFEd
+BEGIN NAMESPACE FabDBFEdEnh
 
 /// <summary>Simple input dialog with several labelled text boxes and an optional check box</summary>
 PUBLIC CLASS InputDialog INHERIT System.Windows.Forms.Form

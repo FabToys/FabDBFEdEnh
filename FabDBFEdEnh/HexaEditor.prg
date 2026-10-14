@@ -9,7 +9,7 @@ USING System.Text
 
 USING System.Windows.Forms
 
-BEGIN NAMESPACE FabDBFEd
+BEGIN NAMESPACE FabDBFEdEnh
 
     PUBLIC PARTIAL CLASS HexaEditor ;
         INHERIT System.Windows.Forms.Form

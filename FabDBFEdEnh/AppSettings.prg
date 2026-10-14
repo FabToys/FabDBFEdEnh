@@ -4,9 +4,9 @@ USING System.Drawing
 USING System.Globalization
 USING System.Collections.Generic
 
-BEGIN NAMESPACE FabDBFEd
+BEGIN NAMESPACE FabDBFEdEnh
 
-/// <summary>Program settings, stored in %APPDATA%\FabDBFEd\FabDBFEd.ini</summary>
+/// <summary>Program settings, stored in %APPDATA%\FabDBFEdEnh\FabDBFEdEnh.ini</summary>
 PUBLIC CLASS AppSettings
     PUBLIC Driver          := "DBFCDX" AS STRING
     PUBLIC Exclusive        := FALSE    AS LOGIC

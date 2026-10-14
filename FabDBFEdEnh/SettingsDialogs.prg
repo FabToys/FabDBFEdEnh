@@ -5,7 +5,7 @@ USING System.Globalization
 USING System.Collections.Generic
 USING System.Windows.Forms
 
-BEGIN NAMESPACE FabDBFEd
+BEGIN NAMESPACE FabDBFEdEnh
 
 /// <summary>
 /// Options - Set Defaults like in the dBAdministrator: tabs Database and Date,

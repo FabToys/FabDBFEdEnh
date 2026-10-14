@@ -5,11 +5,11 @@ using System.Runtime.CompilerServices
 // set of attributes. Change these attribute values to modify the information
 // associated with an assembly.
 //
-[assembly: AssemblyTitle("FabDBFEd")]
+[assembly: AssemblyTitle("FabDBFEdEnh")]
 [assembly: AssemblyDescription("")]
 [assembly: AssemblyConfiguration("")]
 [assembly: AssemblyCompany("")]
-[assembly: AssemblyProduct("FabDBFEd")]
+[assembly: AssemblyProduct("FabDBFEdEnh")]
 [assembly: AssemblyCopyright("Copyright (c) 2019")]
 [assembly: AssemblyTrademark("")]
 [assembly: AssemblyCulture("")]

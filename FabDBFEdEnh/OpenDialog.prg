@@ -2,7 +2,7 @@ USING System
 USING System.Drawing
 USING System.Windows.Forms
 
-BEGIN NAMESPACE FabDBFEd
+BEGIN NAMESPACE FabDBFEdEnh
 
 /// <summary>Open dialog like in the dBAdministrator: Driver, Locking, Exclusive, Read Only, Show Recno, Show Deleted</summary>
 PUBLIC CLASS OpenDialog INHERIT System.Windows.Forms.Form

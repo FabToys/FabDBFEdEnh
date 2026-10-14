@@ -1,7 +1,7 @@
 USING System
 USING Xunit
 
-BEGIN NAMESPACE FabDBFEd.Tests
+BEGIN NAMESPACE FabDBFEdEnh.Tests
 
 PUBLIC CLASS AppSettingsTests
 

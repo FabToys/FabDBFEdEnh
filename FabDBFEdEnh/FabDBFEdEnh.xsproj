@@ -5,7 +5,7 @@
     <Name>FabDBFEdEnh</Name>
     <ProjectGuid>5F271BEB-B7BD-4323-910E-8EA48CF88067</ProjectGuid>
     <OutputType>WinExe</OutputType>
-    <RootNamespace>FabDBFEd</RootNamespace>
+    <RootNamespace>FabDBFEdEnh</RootNamespace>
     <AssemblyName>FabDBFEdEnh</AssemblyName>
     <TargetFrameworkVersion>v4.7.2</TargetFrameworkVersion>
     <Nologo>true</Nologo>

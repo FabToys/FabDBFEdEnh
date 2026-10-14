@@ -12,7 +12,7 @@ USING XSharp.RDD.Support
 USING System.IO
 USING XSharp.RDD.Enums
 
-BEGIN NAMESPACE FabDBFEd
+BEGIN NAMESPACE FabDBFEdEnh
 	
 	FUNCTION ModelCreate( fileName AS STRING, rddInfo AS List<RddFieldInfo>, rdd AS STRING ) AS LOGIC
 		LOCAL model AS FabModel
@@ -181,4 +181,4 @@ RETURN "INT64"
 			//RETURN "OBJECT"
 			
 			END CLASS
-END NAMESPACE // FabDBFEd
+END NAMESPACE // FabDBFEdEnh

@@ -5,7 +5,7 @@ USING System.Drawing
 USING System.Collections.Generic
 USING System.Windows.Forms
 
-BEGIN NAMESPACE FabDBFEd
+BEGIN NAMESPACE FabDBFEdEnh
 
 /// <summary>
 /// FPT analysis (FlexFile/FoxPro memo) like the PowerShell script FptAnalyse.ps1, read only.

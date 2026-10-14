@@ -9,7 +9,7 @@
 //     the code is regenerated.
 //  </auto-generated>
 //------------------------------------------------------------------------------
-BEGIN NAMESPACE FabDBFEd
+BEGIN NAMESPACE FabDBFEdEnh
 
     PUBLIC PARTIAL CLASS HexaEditor ;
         INHERIT System.Windows.Forms.Form

@@ -7,9 +7,9 @@ USING System.Collections.Generic
 USING System.Linq
 USING System.Windows.Forms
 
-USING FabDBFEd
+USING FabDBFEdEnh
 
-BEGIN NAMESPACE FabDBFEd
+BEGIN NAMESPACE FabDBFEdEnh
 
 [STAThread] ;
 	FUNCTION Start() AS VOID
@@ -25,7 +25,7 @@ BEGIN NAMESPACE FabDBFEd
         END TRY
     ENDIF
     LOCAL lFirst := FALSE AS LOGIC
-    LOCAL oMutex := Mutex{ TRUE, "FabDBFEd_dBAdministrator_Single", OUT lFirst } AS Mutex
+    LOCAL oMutex := Mutex{ TRUE, "FabDBFEdEnh_dBAdministrator_Single", OUT lFirst } AS Mutex
     IF ! lFirst
         IF SingleInstance.SendFile( cFile )
             RETURN
@@ -49,7 +49,7 @@ BEGIN NAMESPACE FabDBFEd
     RETURN
 
 
-/// <summary>Writes unhandled errors to %APPDATA%\FabDBFEd\Error.log</summary>
+/// <summary>Writes unhandled errors to %APPDATA%\FabDBFEdEnh\Error.log</summary>
 PUBLIC CLASS ErrorLog
 
     PUBLIC STATIC METHOD LogFile() AS STRING
@@ -108,7 +108,7 @@ END CLASS
 /// (double click on a DBF while the app is already running).
 /// </summary>
 PUBLIC CLASS SingleInstance
-    PRIVATE STATIC PIPENAME := "FabDBFEd_dBAdministrator_Pipe" AS STRING
+    PRIVATE STATIC PIPENAME := "FabDBFEdEnh_dBAdministrator_Pipe" AS STRING
     PRIVATE oWindow AS MainForm
 
     PUBLIC CONSTRUCTOR( oF AS MainForm )

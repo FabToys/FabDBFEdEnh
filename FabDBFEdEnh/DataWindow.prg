@@ -9,7 +9,7 @@ USING XSharp
 USING XSharp.RDD
 USING XSharp.RDD.Support
 
-BEGIN NAMESPACE FabDBFEd
+BEGIN NAMESPACE FabDBFEdEnh
 
 /// <summary>
 /// Data window like in the dBAdministrator: works LIVE on the workarea.

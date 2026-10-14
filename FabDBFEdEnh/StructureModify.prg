@@ -8,7 +8,7 @@ USING XSharp
 USING XSharp.RDD
 USING XSharp.RDD.Support
 
-BEGIN NAMESPACE FabDBFEd
+BEGIN NAMESPACE FabDBFEdEnh
 
 /// <summary>Field definition for the structure rebuild; AltName = field in the old file ("" = new field)</summary>
 PUBLIC CLASS FieldDef

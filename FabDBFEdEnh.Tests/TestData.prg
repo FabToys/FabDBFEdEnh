@@ -5,7 +5,7 @@ USING XSharp
 USING XSharp.RDD
 USING XSharp.RDD.Support
 
-BEGIN NAMESPACE FabDBFEd.Tests
+BEGIN NAMESPACE FabDBFEdEnh.Tests
 
 /// <summary>Creates throw-away tables in a temp folder; the folder is deleted again by Dispose</summary>
 PUBLIC CLASS TestData IMPLEMENTS IDisposable

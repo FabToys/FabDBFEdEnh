@@ -5,7 +5,7 @@ USING System.Drawing.Drawing2D
 USING System.Collections.Generic
 USING System.Windows.Forms
 
-BEGIN NAMESPACE FabDBFEd
+BEGIN NAMESPACE FabDBFEdEnh
 
 /// <summary>MDI main window in the style of the dBAdministrator</summary>
 PUBLIC CLASS MainForm INHERIT System.Windows.Forms.Form

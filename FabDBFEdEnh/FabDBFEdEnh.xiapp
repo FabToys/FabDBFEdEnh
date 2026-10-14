@@ -123,13 +123,13 @@ ReferenceGAC = CLR4,XSharp.MacroCompiler,1,0,2.6.0.0
 ReferenceBrowse = E:\source\repos\FabToys\FabDBFEdEnh\FabDBFEdEnh\lib\ICSharpCode.TextEditorEx.dll,1,1
 ReferenceBrowse = E:\source\repos\FabToys\FabDBFEdEnh\FabDBFEdEnh\lib\Newtonsoft.Json.dll,1,1
 [FabDBFEdEnh Resources]
-ResourceFile = External , %AppPath%\Resources\FabDBFEd.DBFStructWindow.resources
+ResourceFile = External , %AppPath%\Resources\FabDBFEdEnh.DBFStructWindow.resources
 ResourceFileGuid = CB068531-E3E0-49ED-B201-8AE00A4E5342
 Modified = 0
-ResourceFile = External , %AppPath%\Resources\FabDBFEd.FieldWindow.resources
+ResourceFile = External , %AppPath%\Resources\FabDBFEdEnh.FieldWindow.resources
 ResourceFileGuid = 7019C2F9-8DA3-410C-B86C-4D31242C74AE
 Modified = 0
-ResourceFile = External , %AppPath%\Resources\FabDBFEd.HexaEditor.resources
+ResourceFile = External , %AppPath%\Resources\FabDBFEdEnh.HexaEditor.resources
 ResourceFileGuid = 75EDE882-F408-4B50-B71E-1C8AD8EBB28F
 Modified = 0
 [FabDBFEdEnh Native Resources]

@@ -7,7 +7,7 @@ USING System.Text
 USING System.Windows.Forms
 USING XSharp.RDD
 USING XSharp.Rdd.Support
-BEGIN NAMESPACE FabDBFEd
+BEGIN NAMESPACE FabDBFEdEnh
 	PUBLIC PARTIAL CLASS DBFStructWindow ;
 		INHERIT System.Windows.Forms.Form
 	PRIVATE autoInc AS INT
