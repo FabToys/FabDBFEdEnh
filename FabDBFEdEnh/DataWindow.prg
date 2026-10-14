@@ -1175,6 +1175,62 @@ PUBLIC CLASS DataWindow INHERIT System.Windows.Forms.Form
         ENDIF
         RETURN
 
+    /// <summary>Delete all records of the current view (index scope + filter; deleted records are skipped)</summary>
+    PUBLIC METHOD DeleteScoped() AS VOID
+        IF SELF:ReadOnlyMessage()
+            RETURN
+        ENDIF
+        // snapshot: the list changes while records disappear from the view
+        LOCAL aTodo := List<LONG>{ SELF:aRecs } AS List<LONG>
+        IF aTodo:Count == 0
+            MessageBox.Show( "There are no records in the current view.", "Scoped Delete" )
+            RETURN
+        ENDIF
+        LOCAL cInfo := "" AS STRING
+        IF SELF:oFilterCb != NULL .OR. SELF:oScopeFrom != NULL .OR. SELF:oScopeTo != NULL
+            cInfo := " (filter / scope active)"
+        ENDIF
+        IF MessageBox.Show( Convert.ToString( aTodo:Count ) + " record(s) of the current view" + cInfo + " will be deleted. Continue?", ;
+            "Scoped Delete", MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2 ) != DialogResult.Yes
+            RETURN
+        ENDIF
+        LOCAL nNum := 0, nLocked := 0 AS INT
+        LOCAL nRec := SELF:CurrentRec() AS LONG
+        TRY
+            SELF:Sel()
+            FOREACH nR AS LONG IN aTodo
+                DbGoto( nR )
+                IF Deleted()
+                    LOOP
+                ENDIF
+                IF SELF:lExclusive .OR. DbRLock( nR )
+                    DbDelete()
+                    nNum++
+                ELSE
+                    nLocked++
+                ENDIF
+            NEXT
+            DbCommit()
+            IF ! SELF:lExclusive
+                DbUnlock()
+            ENDIF
+        CATCH ex AS Exception
+            MessageBox.Show( ex:Message, "Scoped Delete" )
+        END TRY
+        SELF:LoadList( nRec )
+        MessageBox.Show( Convert.ToString( nNum ) + " records deleted." + ;
+            IIF( nLocked > 0, Environment.NewLine + Convert.ToString( nLocked ) + " locked, not processed.", "" ), "Scoped Delete" )
+        RETURN
+
+    /// <summary>Copy the current record to the DBClipboard, then delete it</summary>
+    PUBLIC METHOD CutRecord( lAdditive AS LOGIC ) AS VOID
+        IF SELF:ReadOnlyMessage() .OR. SELF:CurrentRec() == 0
+            RETURN
+        ENDIF
+        SELF:CopyRecord( lAdditive )
+        SELF:DeleteRecord( TRUE )
+        RETURN
+
     PUBLIC METHOD RecallAll() AS VOID
         IF SELF:ReadOnlyMessage()
             RETURN

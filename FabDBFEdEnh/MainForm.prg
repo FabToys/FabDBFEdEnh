@@ -24,7 +24,7 @@ PUBLIC CLASS MainForm INHERIT System.Windows.Forms.Form
     PUBLIC CONSTRUCTOR()
         SELF:oSettings := AppSettings.LoadSettings()
 
-        SELF:Text           := "FabDBFEd - dbManager"
+        SELF:Text           := "FabDBFEdEnh - dbManager"
         SELF:IsMdiContainer := TRUE
         SELF:Size           := Size{ 1100, 750 }
         SELF:StartPosition  := FormStartPosition.CenterScreen
@@ -116,7 +116,7 @@ PUBLIC CLASS MainForm INHERIT System.Windows.Forms.Form
         SELF:oMenu:Items:Add( m )
         SELF:Entry( m, "Append Record",              Keys.Insert,                            EventHandler{ SELF, @M_Append() } )
         SELF:Entry( m, "Delete Record",              KeyOf( Keys.D, TRUE, FALSE, FALSE ),    EventHandler{ SELF, @M_Delete() } )
-        SELF:Entry( m, "Scoped Delete",              Keys.None, NULL )
+        SELF:Entry( m, "Scoped Delete",              Keys.None,                              EventHandler{ SELF, @M_DeleteScoped() } )
         SELF:AddSeparator( m )
         SELF:Entry( m, "Recall Deleted Record",      KeyOf( Keys.R, TRUE, FALSE, FALSE ),    EventHandler{ SELF, @M_Recall() } )
         SELF:Entry( m, "Recall All Deleted Records", KeyOf( Keys.R, TRUE, TRUE, FALSE ),     EventHandler{ SELF, @M_RecallAll() } )
@@ -154,8 +154,8 @@ PUBLIC CLASS MainForm INHERIT System.Windows.Forms.Form
         SELF:Entry( m, "Copy Record",          KeyOf( Keys.C, TRUE, FALSE, FALSE ), EventHandler{ SELF, @M_Copy() } )
         SELF:Entry( m, "Copy Record Additive", KeyOf( Keys.C, TRUE, TRUE, FALSE ),  EventHandler{ SELF, @M_CopyAdd() } )
         SELF:AddSeparator( m )
-        SELF:Entry( m, "Cut Record",           Keys.None, NULL )
-        SELF:Entry( m, "Cut Record Additive",  Keys.None, NULL )
+        SELF:Entry( m, "Cut Record",           KeyOf( Keys.X, TRUE, FALSE, FALSE ), EventHandler{ SELF, @M_Cut() } )
+        SELF:Entry( m, "Cut Record Additive",  KeyOf( Keys.X, TRUE, TRUE, FALSE ),  EventHandler{ SELF, @M_CutAdd() } )
         SELF:AddSeparator( m )
         SELF:Entry( m, "Paste",                KeyOf( Keys.V, TRUE, FALSE, FALSE ), EventHandler{ SELF, @M_Paste() } )
         SELF:Entry( m, "Paste Append",         KeyOf( Keys.A, TRUE, TRUE, FALSE ),  EventHandler{ SELF, @M_PasteAppend() } )
@@ -294,7 +294,7 @@ PUBLIC CLASS MainForm INHERIT System.Windows.Forms.Form
         e:Graphics:FillRectangle( oBrush, rArea )
         oBrush:Dispose()
         LOCAL oFont := Font{ "Times New Roman", 48, (FontStyle) ( (INT) FontStyle.Bold + (INT) FontStyle.Italic ) } AS Font
-        LOCAL cText := "FabDBFEd" AS STRING
+        LOCAL cText := "FabDBFEdEnh" AS STRING
         LOCAL oSize := e:Graphics:MeasureString( cText, oFont ) AS SizeF
         LOCAL nX := ( rArea:Width - oSize:Width ) / 2 AS REAL4
         LOCAL nY := ( rArea:Height - oSize:Height ) / 2 AS REAL4
@@ -454,7 +454,7 @@ PUBLIC CLASS MainForm INHERIT System.Windows.Forms.Form
 
     PRIVATE METHOD Window_Closing( sender AS OBJECT, e AS FormClosingEventArgs ) AS VOID
         IF SELF:oSettings:AskQuit .AND. e:CloseReason == CloseReason.UserClosing
-            IF MessageBox.Show( "Quit FabDBFEd?", "Confirm on Exit", MessageBoxButtons.YesNo, MessageBoxIcon.Question ) != DialogResult.Yes
+            IF MessageBox.Show( "Quit FabDBFEdEnh?", "Confirm on Exit", MessageBoxButtons.YesNo, MessageBoxIcon.Question ) != DialogResult.Yes
                 e:Cancel := TRUE
                 RETURN
             ENDIF
@@ -569,6 +569,34 @@ PUBLIC CLASS MainForm INHERIT System.Windows.Forms.Form
         LOCAL oF := SELF:ActiveWindow() AS DataWindow
         IF oF != NULL
             oF:DeleteRecord( TRUE )
+        ENDIF
+        RETURN
+
+    PRIVATE METHOD M_DeleteScoped( sender AS OBJECT, e AS EventArgs ) AS VOID
+        LOCAL oF := SELF:ActiveWindow() AS DataWindow
+        IF oF != NULL
+            oF:DeleteScoped()
+        ENDIF
+        RETURN
+
+    PRIVATE METHOD M_Cut( sender AS OBJECT, e AS EventArgs ) AS VOID
+        LOCAL oTb := SELF:TextFocus() AS TextBoxBase
+        IF oTb != NULL
+            IF oTb:SelectionLength > 0
+                oTb:Cut()
+            ENDIF
+            RETURN
+        ENDIF
+        LOCAL oF := SELF:ActiveWindow() AS DataWindow
+        IF oF != NULL
+            oF:CutRecord( FALSE )
+        ENDIF
+        RETURN
+
+    PRIVATE METHOD M_CutAdd( sender AS OBJECT, e AS EventArgs ) AS VOID
+        LOCAL oF := SELF:ActiveWindow() AS DataWindow
+        IF oF != NULL
+            oF:CutRecord( TRUE )
         ENDIF
         RETURN
 
