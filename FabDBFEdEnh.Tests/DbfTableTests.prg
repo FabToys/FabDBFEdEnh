@@ -1,4 +1,4 @@
-USING System
+﻿USING System
 USING System.Collections.Generic
 USING XSharp
 USING XSharp.RDD.Support
@@ -595,6 +595,205 @@ PUBLIC CLASS DbfTableTests
         Assert.Null( DbfTable.JsonValue( DateTime.MinValue ) )
         Assert.Equal( "x", DbfTable.JsonValue( "x" ) )
         Assert.Equal( 5, DbfTable.JsonValue( 5 ) )
+        RETURN
+
+    // ------------------------------------------------------------------
+    // Generate Create PRG / description (ScriptGenerator)
+    // ------------------------------------------------------------------
+    PRIVATE STATIC METHOD Script( oTable AS DbfTable, nStyle AS INT, lIndexes AS LOGIC, lRecords AS LOGIC, lViewOnly AS LOGIC, nCount REF INT ) AS STRING
+        VAR o := ScriptOptions{}
+        o:Style    := nStyle
+        o:Indexes  := lIndexes
+        o:Records  := lRecords
+        o:ViewOnly := lViewOnly
+        VAR w := System.IO.StringWriter{}
+        nCount := ScriptGenerator.WriteScript( w, oTable, o )
+        RETURN w:ToString()
+
+    [Fact];
+    PUBLIC METHOD ScriptLiterals_QuoteTextForXSharpAndFoxPro() AS VOID
+        LOCAL cQuote := ( (CHAR) 34 ):ToString() AS STRING
+        LOCAL cSlash := ( (CHAR) 92 ):ToString() AS STRING
+        Assert.Equal( cQuote + "plain" + cQuote, ScriptGenerator.XsString( "plain" ) )
+        // a quote inside: e-string with the quote escaped by a backslash
+        Assert.Equal( "e" + cQuote + "say " + cSlash + cQuote + "hi" + cSlash + cQuote + cQuote, ;
+            ScriptGenerator.XsString( "say " + cQuote + "hi" + cQuote ) )
+        // a line break: \r\n
+        Assert.Contains( cSlash + "r" + cSlash + "n", ScriptGenerator.XsString( "a" + Environment.NewLine + "b" ) )
+        Assert.Equal( "''", ScriptGenerator.VfpString( "" ) )
+        Assert.Equal( "'abc'", ScriptGenerator.VfpString( "abc" ) )
+        Assert.Equal( "'it' + CHR(39) + 's'", ScriptGenerator.VfpString( "it's" ) )
+        Assert.Equal( "'a' + CHR(13) + CHR(10) + 'b'", ScriptGenerator.VfpString( "a" + Environment.NewLine + "b" ) )
+        RETURN
+
+    [Fact];
+    PUBLIC METHOD ScriptNames_AndFoxProTypes() AS VOID
+        Assert.Equal( "CreateCustomers", ScriptGenerator.FunctionName( "C:\data\customers.dbf" ) )
+        VAR fC := FieldDef{ "NAME", "C", 30, 0, "NAME" }
+        VAR fN := FieldDef{ "AMOUNT", "N", 12, 2, "AMOUNT" }
+        VAR fI := FieldDef{ "ID", "I", 4, 0, "ID" }
+        fI:Extra := "+"
+        VAR fM := FieldDef{ "BLOB", "M", 10, 0, "BLOB" }
+        fM:Extra := "B"
+        VAR fX := FieldDef{ "ODD", "Z", 4, 0, "ODD" }
+        Assert.Equal( "C(30)", ScriptGenerator.VfpType( fC ) )
+        Assert.Equal( "N(12,2)", ScriptGenerator.VfpType( fN ) )
+        Assert.Equal( "I AUTOINC", ScriptGenerator.VfpType( fI ) )
+        Assert.Equal( "M NOCPTRANS", ScriptGenerator.VfpType( fM ) )
+        Assert.Equal( "", ScriptGenerator.VfpType( fX ) )
+        RETURN
+
+    [Fact];
+    PUBLIC METHOD WriteScript_DbCreateStyleWithIndexAndRecords() AS VOID
+        VAR oData := TestData{}
+        TRY
+            VAR oTable := OpenTable( CreateCab( oData ), TRUE )
+            oTable:CreateOrder( "BYNAME", "NAME", "", FALSE )
+            oTable:SetDeleted( 3, TRUE )                                   // B is deleted: not exported
+            LOCAL nCount := 0 AS INT
+            VAR cText := Script( oTable, ScriptOptions.StyleDbCreate, TRUE, TRUE, FALSE, REF nCount )
+            Assert.Equal( 2, nCount )
+            Assert.Contains( "FUNCTION CreateCab( cFile AS STRING ) AS LOGIC", cText )
+            Assert.Contains( "{ ""NAME"", ""C"", 10, 0 }", cText )
+            Assert.Contains( "DbCreate( cFile, aStruct, ""DBFCDX"" )", cText )
+            Assert.Contains( "CreateCabRow( { ""C"", 1 } )", cText )
+            Assert.Contains( "CreateCabRow( { ""A"", 2 } )", cText )
+            Assert.DoesNotContain( "{ ""B"", 3 }", cText )
+            Assert.Contains( "OrdCreate( cFile, ""BYNAME"", ""NAME"", {|| NAME } )", cText )
+            // without records and indexes: structure only
+            VAR cShort := Script( oTable, ScriptOptions.StyleDbCreate, FALSE, FALSE, FALSE, REF nCount )
+            Assert.Equal( 0, nCount )
+            Assert.DoesNotContain( "OrdCreate", cShort )
+            Assert.DoesNotContain( "Row(", cShort )
+            oTable:Close()
+        FINALLY
+            oData:Dispose()
+        END TRY
+        RETURN
+
+    [Fact];
+    PUBLIC METHOD WriteScript_RddFieldInfoStyle() AS VOID
+        VAR oData := TestData{}
+        TRY
+            VAR oTable := OpenTable( CreateCab( oData ), TRUE )
+            LOCAL nCount := 0 AS INT
+            VAR cText := Script( oTable, ScriptOptions.StyleRddFieldInfo, TRUE, TRUE, FALSE, REF nCount )
+            Assert.Equal( 3, nCount )
+            Assert.Contains( "RddFieldInfo{ ""NAME"", ""C"", 10, 0 }", cText )
+            Assert.Contains( "CoreDb.Create( cFile, aFields, ""DBFCDX"", TRUE, ""CAB"", """", FALSE, FALSE )", cText )
+            Assert.Contains( "CreateCabRow( <OBJECT>{ ""C"", 1 } )", cText )
+            Assert.Contains( "STATIC FUNCTION CreateCabRow( aValues AS OBJECT[] ) AS VOID", cText )
+            oTable:Close()
+        FINALLY
+            oData:Dispose()
+        END TRY
+        RETURN
+
+    [Fact];
+    PUBLIC METHOD WriteScript_FoxProStyleWithAllTypes() AS VOID
+        VAR oData := TestData{}
+        TRY
+            LOCAL aFields := <RddFieldInfo>{ TestData.Field( "NAME", "C", 10, 0 ), TestData.Field( "DUE", "D", 8, 0 ), ;
+                TestData.Field( "OK", "L", 1, 0 ), TestData.Field( "NOTE", "M", 10, 0 ) } AS RddFieldInfo[]
+            LOCAL cFile := oData:CreateTable( "types", aFields ) AS STRING
+            oData:Append( cFile, <OBJECT>{ "O'Neil", DateTime{ 2026, 10, 14 }, TRUE, "line1" + Environment.NewLine + "line2" } )
+            VAR oTable := OpenTable( cFile, TRUE )
+            oTable:CreateOrder( "BYNAME", "NAME", "", FALSE )
+            LOCAL nCount := 0 AS INT
+            VAR cFox := Script( oTable, ScriptOptions.StyleVisualFoxPro, TRUE, TRUE, FALSE, REF nCount )
+            Assert.Equal( 1, nCount )
+            Assert.Contains( "CREATE TABLE types ( ;", cFox )
+            Assert.Contains( "NAME C(10), ;", cFox )
+            Assert.Contains( "DUE D, ;", cFox )
+            Assert.Contains( "OK L, ;", cFox )
+            Assert.Contains( "NOTE M )", cFox )
+            Assert.Contains( "INSERT INTO types ( NAME, DUE, OK, NOTE ) VALUES ( 'O' + CHR(39) + 'Neil', {^2026-10-14}, .T., 'line1' + CHR(13) + CHR(10) + 'line2' )", cFox )
+            Assert.Contains( "INDEX ON NAME TAG BYNAME", cFox )
+            // the same data as X#: date as SToD in the VO style, DateTime{} in the Core style
+            VAR cVo := Script( oTable, ScriptOptions.StyleDbCreate, FALSE, TRUE, FALSE, REF nCount )
+            Assert.Contains( "SToD( ""20261014"" )", cVo )
+            VAR cCore := Script( oTable, ScriptOptions.StyleRddFieldInfo, FALSE, TRUE, FALSE, REF nCount )
+            Assert.Contains( "DateTime{ 2026, 10, 14 }", cCore )
+            Assert.Contains( "TRUE", cCore )
+            oTable:Close()
+        FINALLY
+            oData:Dispose()
+        END TRY
+        RETURN
+
+    [Fact];
+    PUBLIC METHOD ScriptValues_FormatIntegersFloatsAndDecimalsInvariantly() AS VOID
+        // a Visual FoxPro integer field (type I) delivers Int32: the "R" format of doubles must not be used for it
+        Assert.Equal( "42", ScriptGenerator.XsValue( 42, "I", TRUE ) )
+        Assert.Equal( "42", ScriptGenerator.XsValue( 42, "I", FALSE ) )
+        Assert.Equal( "-7", ScriptGenerator.XsValue( (INT64) -7, "N", TRUE ) )
+        Assert.Equal( "19.99", ScriptGenerator.XsValue( 19.99, "N", TRUE ) )
+        Assert.Equal( "1.5", ScriptGenerator.XsValue( System.Convert.ToDecimal( 1.5 ), "Y", FALSE ) )
+        Assert.Equal( "42", ScriptGenerator.VfpValue( 42, "I" ) )
+        Assert.Equal( "19.99", ScriptGenerator.VfpValue( 19.99, "N" ) )
+        // nothing to write: NIL / NULL, and the FoxPro defaults
+        Assert.Equal( "NIL", ScriptGenerator.XsValue( NULL, "C", TRUE ) )
+        Assert.Equal( "NULL", ScriptGenerator.XsValue( NULL, "C", FALSE ) )
+        Assert.Equal( "{}", ScriptGenerator.VfpValue( NULL, "D" ) )
+        Assert.Equal( "0", ScriptGenerator.VfpValue( NULL, "I" ) )
+        RETURN
+
+    [Fact];
+    PUBLIC METHOD WriteScript_ArrayLiteralEndsWithoutLineContinuation() AS VOID
+        VAR oData := TestData{}
+        TRY
+            VAR oTable := OpenTable( CreateCab( oData ), TRUE )
+            LOCAL nCount := 0 AS INT
+            VAR cVo := Script( oTable, ScriptOptions.StyleDbCreate, FALSE, FALSE, FALSE, REF nCount )
+            Assert.Contains( "{ ""QTY"", ""N"", 5, 0 } }" + Environment.NewLine, cVo )
+            VAR cCore := Script( oTable, ScriptOptions.StyleRddFieldInfo, FALSE, FALSE, FALSE, REF nCount )
+            Assert.Contains( "RddFieldInfo{ ""QTY"", ""N"", 5, 0 } } ;", cCore )
+            oTable:Close()
+        FINALLY
+            oData:Dispose()
+        END TRY
+        RETURN
+
+    [Fact];
+    PUBLIC METHOD WriteScript_ViewOnlyExportsTheFilteredRecords() AS VOID
+        VAR oData := TestData{}
+        TRY
+            VAR oTable := OpenTable( CreateFive( oData ), TRUE )
+            oTable:SetFilter( "QTY >= 4" )
+            oTable:LoadList()
+            LOCAL nCount := 0 AS INT
+            VAR cView := Script( oTable, ScriptOptions.StyleDbCreate, FALSE, TRUE, TRUE, REF nCount )
+            Assert.Equal( 2, nCount )
+            Assert.Contains( "{ ""D"", 4 }", cView )
+            Assert.DoesNotContain( "{ ""A"", 1 }", cView )
+            Script( oTable, ScriptOptions.StyleDbCreate, FALSE, TRUE, FALSE, REF nCount )
+            Assert.Equal( 5, nCount )
+            oTable:Close()
+        FINALLY
+            oData:Dispose()
+        END TRY
+        RETURN
+
+    [Fact];
+    PUBLIC METHOD WriteDescription_ListsFieldsOffsetsAndIndexes() AS VOID
+        VAR oData := TestData{}
+        TRY
+            VAR oTable := OpenTable( CreateCab( oData ), TRUE )
+            oTable:CreateOrder( "BYNAME", "NAME", "", FALSE )
+            VAR w := System.IO.StringWriter{}
+            ScriptGenerator.WriteDescription( w, oTable )
+            VAR cText := w:ToString()
+            Assert.Contains( "Records       : 3", cText )
+            Assert.Contains( "Record length : 16 bytes", cText )
+            Assert.Contains( "Fields        : 2", cText )
+            Assert.Contains( " 1  NAME ", cText )
+            Assert.Contains( " 2  QTY ", cText )
+            Assert.Contains( "Indexes: 1", cText )
+            Assert.Contains( "BYNAME", cText )
+            oTable:Close()
+        FINALLY
+            oData:Dispose()
+        END TRY
         RETURN
 
     [Fact];

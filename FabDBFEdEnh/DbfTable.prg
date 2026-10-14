@@ -397,6 +397,24 @@ PUBLIC CLASS DbfTable
         NEXT
         RETURN aValues
 
+    /// <summary>The field definitions as the RDD reports them: name, type, length, decimals and the type flags
+    /// (Extra: B = binary, + = AutoIncrement, N = nullable ...)</summary>
+    PUBLIC METHOD GetFieldDefs() AS List<FieldDef>
+        LOCAL aDefs := List<FieldDef>{} AS List<FieldDef>
+        FOR VAR i := 1 TO SELF:aName:Count
+            aDefs:Add( FieldDef.FromRdd( SELF:oRdd, i ) )
+        NEXT
+        RETURN aDefs
+
+    /// <summary>TRUE when the order was created with the UNIQUE flag</summary>
+    PUBLIC METHOD IsUniqueOrder( cName AS STRING, cBag AS STRING ) AS LOGIC
+        TRY
+            SELF:Sel()
+            RETURN (LOGIC) OrdIsUnique( cName, cBag )
+        CATCH
+            RETURN FALSE
+        END TRY
+
     /// <summary>First 12 bytes of the DBF header (read from disk), NULL when the file cannot be read</summary>
     PUBLIC METHOD ReadHeader() AS BYTE[]
         TRY

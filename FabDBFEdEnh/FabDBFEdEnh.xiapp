@@ -108,6 +108,10 @@ File = %AppPath%\DbfTable.prg
 FileGUID = 104EBDC7-40EE-48DF-8E8D-68D49924F28C
 FileType = Code
 CopyToBin = 0
+File = %AppPath%\ScriptGenerator.prg
+FileGUID = D0BC83F4-2D1F-4089-B1E3-A52110B102BA
+FileType = Code
+CopyToBin = 0
 [FabDBFEdEnh References]
 ReferenceGAC = CLR4,System,1,0,4.0.0.0
 ReferenceGAC = CLR4,System.Core,1,0,4.0.0.0

@@ -1708,6 +1708,81 @@ PUBLIC CLASS DataWindow INHERIT System.Windows.Forms.Form
         MessageBox.Show( Convert.ToString( nCount ) + " records exported to " + sfd:FileName, "Export JSON", MessageBoxButtons.OK, MessageBoxIcon.Information )
         RETURN
 
+    // =====================================================================
+    // Generate Create PRG / DBF description
+    // =====================================================================
+    /// <summary>Utils - Generate Create PRG: options dialog, then a Save dialog that starts in the folder of the DBF</summary>
+    PUBLIC METHOD GenerateCreateScript() AS VOID
+        LOCAL cName := Path.GetFileNameWithoutExtension( SELF:cFile ) AS STRING
+        SELF:SyncOrder()
+        LOCAL lRestricted := SELF:cFilterText:Length > 0 .OR. SELF:oScopeFrom != NULL .OR. SELF:oScopeTo != NULL AS LOGIC
+        LOCAL dlg := ScriptDialog{ cName, SELF:oTable:OrderNames():Count > 0, lRestricted, SELF:oTable:RecordCount(), SELF:aRecs:Count } AS ScriptDialog
+        IF dlg:ShowDialog( SELF ) != DialogResult.OK
+            RETURN
+        ENDIF
+        LOCAL oOptions := dlg:Options AS ScriptOptions
+        LOCAL sfd := SaveFileDialog{} AS SaveFileDialog
+        sfd:Title            := "Save the generated source file"
+        sfd:DefaultExt       := "prg"
+        sfd:Filter           := "PRG files (*.prg)|*.prg|Text files (*.txt)|*.txt|All files (*.*)|*.*"
+        sfd:FileName         := ScriptDialog.DefaultFileName( cName, oOptions:Style )
+        sfd:InitialDirectory := Path.GetDirectoryName( SELF:cFile )
+        sfd:OverwritePrompt  := TRUE
+        IF sfd:ShowDialog( SELF ) != DialogResult.OK
+            RETURN
+        ENDIF
+        SELF:Commit()
+        LOCAL nCount := 0 AS INT
+        SELF:Cursor := Cursors.WaitCursor
+        TRY
+            // BOM: the X# / Visual FoxPro compilers then read accented characters correctly
+            LOCAL w := StreamWriter{ sfd:FileName, FALSE, System.Text.UTF8Encoding{ TRUE } } AS StreamWriter
+            TRY
+                nCount := ScriptGenerator.WriteScript( w, SELF:oTable, oOptions )
+            FINALLY
+                w:Close()
+            END TRY
+        CATCH ex AS Exception
+            SELF:Cursor := Cursors.Default
+            MessageBox.Show( "The file could not be written:" + Environment.NewLine + ex:Message, "Generate Create PRG", ;
+                MessageBoxButtons.OK, MessageBoxIcon.Error )
+            RETURN
+        FINALLY
+            SELF:Cursor := Cursors.Default
+        END TRY
+        MessageBox.Show( "Written to " + sfd:FileName + IIF( oOptions:Records, Environment.NewLine + Convert.ToString( nCount ) + " records exported.", "" ), ;
+            "Generate Create PRG", MessageBoxButtons.OK, MessageBoxIcon.Information )
+        RETURN
+
+    /// <summary>Utils - Generate DBF Desc File: plain text description, Save dialog starts in the folder of the DBF</summary>
+    PUBLIC METHOD GenerateDescription() AS VOID
+        LOCAL cName := Path.GetFileNameWithoutExtension( SELF:cFile ) AS STRING
+        LOCAL sfd := SaveFileDialog{} AS SaveFileDialog
+        sfd:Title            := "Save the DBF description"
+        sfd:DefaultExt       := "txt"
+        sfd:Filter           := "Text files (*.txt)|*.txt|All files (*.*)|*.*"
+        sfd:FileName         := cName + "_desc.txt"
+        sfd:InitialDirectory := Path.GetDirectoryName( SELF:cFile )
+        sfd:OverwritePrompt  := TRUE
+        IF sfd:ShowDialog( SELF ) != DialogResult.OK
+            RETURN
+        ENDIF
+        SELF:Commit()
+        TRY
+            LOCAL w := StreamWriter{ sfd:FileName, FALSE, System.Text.UTF8Encoding{ TRUE } } AS StreamWriter
+            TRY
+                ScriptGenerator.WriteDescription( w, SELF:oTable )
+            FINALLY
+                w:Close()
+            END TRY
+        CATCH ex AS Exception
+            MessageBox.Show( "The file could not be written:" + Environment.NewLine + ex:Message, "Generate DBF Desc File", ;
+                MessageBoxButtons.OK, MessageBoxIcon.Error )
+            RETURN
+        END TRY
+        MessageBox.Show( "Written to " + sfd:FileName, "Generate DBF Desc File", MessageBoxButtons.OK, MessageBoxIcon.Information )
+        RETURN
+
     PUBLIC METHOD FptReport() AS VOID
         LOCAL cText := "" AS STRING
         IF SELF:lExclusive

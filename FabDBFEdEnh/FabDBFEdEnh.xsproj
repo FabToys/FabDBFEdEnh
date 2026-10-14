@@ -100,6 +100,7 @@
     <Compile Include="AssemblyInfo.prg" />
     <Compile Include="DataWindow.prg" />
     <Compile Include="DbfTable.prg" />
+    <Compile Include="ScriptGenerator.prg" />
     <Compile Include="DBFStructWindow.Designer.prg">
       <DependentUpon>DBFStructWindow.prg</DependentUpon>
     </Compile>

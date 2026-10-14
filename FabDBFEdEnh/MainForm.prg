@@ -188,8 +188,8 @@ PUBLIC CLASS MainForm INHERIT System.Windows.Forms.Form
         SELF:Entry( m, "Text File Editor",       Keys.None, NULL )
         SELF:Entry( m, "Open Database List",     Keys.None, NULL )
         SELF:AddSeparator( m )
-        SELF:Entry( m, "Generate Create PRG",    Keys.None, NULL )
-        SELF:Entry( m, "Generate DBF Desc File", Keys.None, NULL )
+        SELF:Entry( m, "Generate Create PRG...", Keys.None, EventHandler{ SELF, @M_GenCreate() } )
+        SELF:Entry( m, "Generate DBF Desc File...", Keys.None, EventHandler{ SELF, @M_GenDesc() } )
 
         // --- Options ---
         m := ToolStripMenuItem{ "&Options" }
@@ -962,6 +962,20 @@ PUBLIC CLASS MainForm INHERIT System.Windows.Forms.Form
         LOCAL oDW := SELF:ActiveWindow() AS DataWindow
         IF oDW != NULL
             oDW:ExportJson()
+        ENDIF
+        RETURN
+
+    PRIVATE METHOD M_GenCreate( sender AS OBJECT, e AS EventArgs ) AS VOID
+        LOCAL oDW := SELF:ActiveWindow() AS DataWindow
+        IF oDW != NULL
+            oDW:GenerateCreateScript()
+        ENDIF
+        RETURN
+
+    PRIVATE METHOD M_GenDesc( sender AS OBJECT, e AS EventArgs ) AS VOID
+        LOCAL oDW := SELF:ActiveWindow() AS DataWindow
+        IF oDW != NULL
+            oDW:GenerateDescription()
         ENDIF
         RETURN
 
